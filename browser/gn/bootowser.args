@@ -1,0 +1,92 @@
+# Bootowser GN args for a stripped, release-mode, kiosk-only Chromium.
+#
+# Consumed by browser/build.sh via `gn gen --args-file`. Unknown args are a
+# hard error in GN, so this file doubles as a tripwire: when a Chromium roll
+# renames an arg the build stops immediately instead of silently shipping a
+# fat binary.
+#
+# Run `gn args --list <outdir> | grep <name>` to confirm an arg still exists
+# after rolling CHROMIUM_VERSION forward. See docs/browser.md.
+
+# --- Release build ---------------------------------------------------------
+is_debug = false
+is_official_build = true
+is_component_build = false
+dcheck_always_on = false
+blink_symbol_level = 0
+
+# Aggressive size/symbol stripping: we ship no debugger and no crash reports.
+symbol_level = 0
+strip_debug_info = true
+exclude_unwind_tables = true
+remove_unused_dependencies = true
+
+# --- Telemetry and crash reporting: off -------------------------------------
+# A kiosk on a boot splash has no business phoning home. This also removes
+# crashpad and the metrics infrastructure, which is a large chunk of the binary.
+enable_crash_reporter = false
+enable_metrics = false
+enable_reporting = false
+enable_upload_invalid_crash_oom_data = false
+disable_fieldtrial_testing_config = true
+
+# Google service keys are intentionally empty; there is no signed-in user.
+google_api_key = ""
+google_default_client_id = ""
+google_default_client_secret = ""
+
+# --- Safe Browsing: off ----------------------------------------------------
+# The kiosk is expected to sit on a trusted LAN or captive network. The
+# updater cannot phone home either, so the download-based lists would never
+# refresh. Keep this on if you deploy Bootowser on the open internet.
+safe_browsing_mode = 0
+
+# --- Feature stripping -----------------------------------------------------
+# No extension support at all: no component extensions (certificates,
+# cloud printing, PDF viewer, ...), no WebStore, no unpacked extensions.
+enable_chrome_extension_support = false
+enable_extension_webui = false
+
+# Chrome is Google's binary; Bootowser is not. Unbranding also drops the
+# Google-specific entitlements, branding assets and updater wiring.
+is_chrome_branded = false
+
+# Features that are dead weight for a single-purpose boot display.
+enable_print_preview = false
+enable_reading_mode = false
+enable_read_aloud = false
+enable_spellview = false
+enable_mdns = false
+build_with_tflite_lib = false
+
+# Spellcheck pulls in Hunspell plus per-language dictionaries (tens of MB).
+# Enable it only if the displayed pages actually contain form fields.
+enable_spellcheck = false
+
+# Widevine is kept on: DRM-capable sites are the whole point of a "browser as
+# a boot screen" on TV-like hardware. Set to false to save ~2 MB if you do not
+# need streaming.
+enable_widevine = true
+
+# --- Codecs ----------------------------------------------------------------
+# Chromium (libav) codecs only; no proprietary or hardware-specific blobs.
+proprietary_codecs = false
+ffmpeg_branding = "Chromium"
+use_openh264 = false
+rtc_include_builtin_video_encoder = false
+
+# --- Toolchain and build speed ---------------------------------------------
+is_clang = true
+use_lld = true
+
+# ThinLTO and PGO are excellent for shipping to users but roughly triple
+# build time and disk. Turn both on in a dedicated release pipeline.
+use_thin_lto = false
+chrome_pgo_phase = 0
+
+treat_warnings_as_errors = false
+clang_use_chrome_plugins = false
+
+# --- V8 / Blink hardening that costs size ----------------------------------
+v8_enable_disassembler = false
+v8_enable_verify_heap = false

@@ -1,0 +1,213 @@
+#!/usr/bin/env bash
+#
+# bootowser - start the locked-down Bootowser kiosk browser.
+#
+# This wrapper is deliberately dumb: it turns a small config file into a
+# Chromium command line and execs the browser. The actual lockdown lives in
+# the binary (browser/patches) and in the managed policy file, so editing this
+# script cannot weaken the kiosk.
+#
+# Arguments given on the command line are appended after the flags built here,
+# which lets an operator override a single switch without editing the config.
+#
+set -uo pipefail
+
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+readonly SELF
+readonly PREFIX="${BOOTOWSER_PREFIX:-/usr}"
+readonly LIB_DIR="${PREFIX}/lib/bootowser"
+readonly CONFIG="${BOOTOWSER_CONFIG:-/etc/bootowser/bootowser.conf}"
+readonly POLICY_DIR="${BOOTOWSER_POLICY_DIR:-/etc/bootowser/policies/managed}"
+readonly BROWSER="${BOOTOWSER_BROWSER:-${LIB_DIR}/chrome}"
+
+log() { printf 'bootowser: %s\n' "$*" >&2; }
+die() { printf 'bootowser: %s\n' "$*" >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Config harvesting
+#
+# Done first, and in a re-entrant subshell, so that reading the config can
+# never recurse into this block.
+# ---------------------------------------------------------------------------
+dump_config() {
+  [ -r "${CONFIG}" ] || return 0
+  local line key val
+  while IFS= read -r line || [ -n "${line}" ]; do
+    case "${line}" in
+      ''|'#'*) continue ;;
+    esac
+    case "${line}" in
+      *=*) ;;
+      *) continue ;;
+    esac
+    key="${line%%=*}"
+    val="${line#*=}"
+    val="${val%\"}"
+    val="${val#\"}"
+    # Only well-formed keys are honoured; anything else is ignored rather
+    # than eval'd, so a hostile config file cannot inject shell.
+    case "${key}" in
+      [A-Z][A-Z0-9_]*) printf '%s=%q\n' "${key}" "${val}" ;;
+    esac
+  done < "${CONFIG}"
+}
+
+if [ "${1:-}" = "--dump-config" ]; then
+  dump_config
+  exit 0
+fi
+
+if [ -r "${CONFIG}" ]; then
+  # shellcheck disable=SC1090
+  eval "$("${SELF}" --dump-config)"
+else
+  log "no config at ${CONFIG}; using built-in defaults"
+fi
+
+# Defaults, applied only where the config said nothing.
+: "${START_URL:=about:blank}"
+: "${DISABLE_GPU:=no}"
+: "${DISABLE_GPU_COMPOSITING:=no}"
+: "${IDLE_BLANK_MINUTES:=0}"
+: "${IDLE_SUSPEND_MINUTES:=0}"
+: "${EXTRA_SWITCHES:=}"
+: "${PROFILE_DIR:=/var/lib/bootowser/profile}"
+: "${LOG_LEVEL:=1}"
+: "${VERBOSE:=no}"
+
+# ---------------------------------------------------------------------------
+# Sanity checks
+# ---------------------------------------------------------------------------
+[ -x "${BROWSER}" ] || die "browser binary not found or not executable: ${BROWSER}
+   Build it with browser/build.sh, or point BOOTOWSER_BROWSER at an existing build."
+
+[ -d "${POLICY_DIR}" ] || log "warning: managed policy directory ${POLICY_DIR} is missing;
+   the kiosk will run on Chromium's stock defaults."
+
+case "${START_URL}" in
+  http://*|https://*) ;;
+  *) die "START_URL must be an http:// or https:// URL (got '${START_URL}')." ;;
+esac
+
+# ---------------------------------------------------------------------------
+# Profile
+#
+# A fresh profile each boot: a kiosk should not carry cookies or a stale cache
+# across reboots. Point PROFILE_DIR at a tmpfs for a fully in-memory session.
+# ---------------------------------------------------------------------------
+mkdir -p "${PROFILE_DIR}" || die "cannot create profile directory ${PROFILE_DIR}"
+chmod 0700 "${PROFILE_DIR}"
+
+# ---------------------------------------------------------------------------
+# Display
+#
+# Chromium cannot paint on a bare text console, so Bootowser ships a minimal,
+# window-manager-less X server. If one is already listening we reuse it, which
+# is what makes Bootowser usable inside an existing desktop session.
+# ---------------------------------------------------------------------------
+readonly X_DISPLAY="${DISPLAY:-:0}"
+readonly XSOCKET="/tmp/.X11-unix/X${X_DISPLAY#:}"
+
+if [ ! -S "${XSOCKET}" ]; then
+  log "no X server on ${X_DISPLAY}; starting the bundled one"
+  "${LIB_DIR}/bootowser-xsession" &
+  x_pid=$!
+
+  waited=0
+  while [ ! -S "${XSOCKET}" ]; do
+    if ! kill -0 "${x_pid}" 2>/dev/null; then
+      die "the X server exited during startup; see: journalctl -u bootowser -b"
+    fi
+    [ "${waited}" -ge 60 ] && die "timed out waiting for an X server on ${X_DISPLAY}"
+    sleep 0.5
+    waited=$(( waited + 1 ))
+  done
+  log "X server ready after $(awk "BEGIN{print ${waited}/2}")s"
+fi
+
+# ---------------------------------------------------------------------------
+# Command line
+# ---------------------------------------------------------------------------
+# Chromium keeps only the *last* --disable-features it is given, so the feature
+# list is assembled in one place and emitted exactly once.
+DISABLED_FEATURES=(
+  Translate
+  MediaRouter
+  OptimizationHints
+  AutofillServerCommunication
+  InterestFeedContentSuggestions
+  PrivacySandboxSettings4
+  AutofillEnableAccountWalletStorage
+)
+# Kiosk has no keyboard route out by design; the only supported recovery is
+# switching to a TTY and stopping the unit (see docs/architecture.md).
+DISABLED_FEATURES+=(GlobalShortcutsPortal)
+
+IFS=,; FEATURES_CSV="${DISABLED_FEATURES[*]}"; unset IFS
+
+CMD=(
+  "${BROWSER}"
+  --bootowser
+  "--bootowser-config=${CONFIG}"
+  "--policy-directory=${POLICY_DIR}"
+  "--user-data-dir=${PROFILE_DIR}"
+  "--kiosk=${START_URL}"
+  --no-default-browser-check
+  --no-first-run
+  --hide-crash-restore-bubble
+  --disable-session-crashed-bubble
+  --disable-background-networking
+  --disable-component-update
+  --disable-sync
+  --disable-translate
+  --password-store=basic
+  --overscroll-history-navigation=0
+  --disable-pinch
+  --ash-no-nudges
+  --check-for-update-interval=31536000
+  "--disable-features=${FEATURES_CSV}"
+)
+
+# Chromium logging: keep it on the journal, never on a terminal that no longer
+# exists.
+case "${LOG_TARGET:-journal}" in
+  none) ;;
+  *)    CMD+=(--enable-logging=stderr "--v=${LOG_LEVEL:-1}") ;;
+esac
+
+[ "${VERBOSE}" = "yes" ] && CMD+=(--bootowser-verbose)
+
+[ "${DISABLE_GPU}" = "yes" ] && CMD+=(--disable-gpu)
+[ "${DISABLE_GPU_COMPOSITING}" = "yes" ] && CMD+=(--disable-gpu-compositing)
+
+if [ -n "${EXTRA_SWITCHES}" ]; then
+  while IFS= read -r extra; do
+    [ -n "${extra}" ] && CMD+=("${extra}")
+  done <<< "${EXTRA_SWITCHES}"
+fi
+
+CMD+=( "$@" )
+
+# ---------------------------------------------------------------------------
+# Idle power management, done at the X level where xset lives. Absent xset the
+# kiosk simply never blanks, which is safe if not ideal.
+# ---------------------------------------------------------------------------
+if [ "${IDLE_BLANK_MINUTES}" -gt 0 ] 2>/dev/null && command -v xset >/dev/null 2>&1; then
+  blank_secs=$(( IDLE_BLANK_MINUTES * 60 ))
+  ( xset s "${blank_secs}" 0 "${blank_secs}" 0; \
+    xset dpms 0 0 0 >/dev/null 2>&1 ) &
+  log "display blanks after ${IDLE_BLANK_MINUTES}m of idle"
+elif [ "${IDLE_BLANK_MINUTES}" != "0" ]; then
+  log "warning: IDLE_BLANK_MINUTES is set but xset is not installed; ignoring"
+fi
+
+if [ "${IDLE_SUSPEND_MINUTES}" -gt 0 ] 2>/dev/null && command -v xset >/dev/null 2>&1; then
+  ( xset dpms 0 0 "${IDLE_SUSPEND_MINUTES}" 0 ) &
+  log "display suspends after ${IDLE_SUSPEND_MINUTES}m of idle"
+fi
+
+# ---------------------------------------------------------------------------
+# Run
+# ---------------------------------------------------------------------------
+log "exec ${CMD[0]} $(printf '%q ' "${CMD[@]:1}")"
+exec "${CMD[@]}"

@@ -1,0 +1,50 @@
+---
+name: Patch broken against Chromium
+about: A patch in browser/patches/ no longer applies
+title: "[patches] "
+labels: patches, chromium-upstream
+assignees: ""
+---
+
+## Chromium version
+
+```
+$ cat browser/CHROMIUM_VERSION
+```
+
+## What broke
+
+Paste the output of the verifier, which reports which patch and which
+upstream file:
+
+```
+$ tools/verify-patches.sh
+```
+
+## Failing command
+
+```
+$ cd browser && ./apply-patches.sh --check
+```
+
+## Where the code went
+
+If you already know, say where it is now. Chromium renames files constantly
+and this is usually the whole fix:
+
+- `chrome_switches.cc` — deleted; switches are now `constexpr` in headers
+- `startup_utils.cc` — now `ui/startup/startup_utils.cc`
+- `chrome/browser/ui/web_ui/` — gone
+- `PreSandboxStartup()` — still in `chrome/app/chrome_main_delegate.cc`
+
+## Proposed fix
+
+<!-- A format-patch against the new tag is ideal:
+
+      git format-patch -1 --stdout > browser/patches/000N-short-name.patch
+
+     Remember to append it to browser/patches/series and add an assertion to
+     tools/verify-patches.sh so CI proves it is present. -->
+
+```diff
+```

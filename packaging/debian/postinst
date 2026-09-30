@@ -1,0 +1,42 @@
+#!/bin/sh
+# Post-installation for bootowser.
+set -e
+
+case "$1" in
+  configure)
+    # Unprivileged kiosk user. It only ever needs to talk to X, a GPU and the
+    # journal; everything else is denied by the unit's sandboxing.
+    if ! getent passwd bootowser >/dev/null; then
+      adduser --system --group --home /var/lib/bootowser \
+              --no-create-home --disabled-password \
+              --gecos "Bootowser kiosk browser" bootowser \
+        >/dev/null 2>&1 || true
+    fi
+    if getent group video >/dev/null; then
+      adduser bootowser video >/dev/null 2>&1 || true
+    fi
+
+    install -d -m 0700 -o bootowser -g bootowser /var/lib/bootowser/profile
+
+    if [ -z "$2" ] && [ -e /etc/bootowser/bootowser.conf ]; then
+      # A fresh install ships a placeholder URL. Kiosks that boot to
+      # about:blank look broken, so make the next step obvious.
+      if grep -q '^START_URL="about:blank"$' /etc/bootowser/bootowser.conf; then
+        cat >&2 <<'MSG'
+
+bootowser: set your start URL before enabling the service:
+    $EDITOR /etc/bootowser/bootowser.conf
+    systemctl enable --now bootowser
+
+MSG
+      fi
+    fi
+    ;;
+
+  abort-upgrade|abort-remove|abort-deconfigure)
+    ;;
+esac
+
+#DEBHELPER#
+
+exit 0

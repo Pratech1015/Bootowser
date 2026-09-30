@@ -1,0 +1,65 @@
+---
+name: Bug report
+about: Something in Bootowser does not work
+title: ""
+labels: bug
+assignees: ""
+---
+
+## What happened
+
+<!-- What did you do, what did you expect, what happened instead. -->
+
+## What you expected
+
+## Reproduction
+
+<!-- The exact steps. For a boot-time issue, the config file is usually the
+     fastest path to the answer. -->
+
+## Environment
+
+```
+$ bootowser --version
+$ uname -a
+$ cat /etc/os-release
+```
+
+Distribution and version (Arch / Fedora / Debian / other):
+Desktop environment, or "none, kiosk only":
+
+## Configuration
+
+<!-- Redact anything sensitive. START_URL, SCREEN_* and DISABLE_GPU are the
+     ones that usually explain the behaviour. -->
+
+```ini
+# /etc/bootowser/bootowser.conf
+START_URL=""
+```
+
+## Chromium version
+
+```
+$ cat browser/CHROMIUM_VERSION
+```
+
+## Build
+
+Did the patch series apply cleanly, or did you have to fix it up?
+
+```
+$ cd browser && ../tools/verify-patches.sh
+```
+
+Paste anything it printed.
+
+## Logs
+
+```
+$ journalctl -u bootowser.service -u bootowser-xserver.service -b --no-pager
+```
+
+## Anything else
+
+<!-- A screenshot of the actual screen is worth a lot here. -->

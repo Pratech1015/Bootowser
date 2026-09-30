@@ -1,0 +1,86 @@
+#!/usr/bin/make -f
+#
+# Build the Bootowser runtime Debian package.
+#
+# The browser binary is not built here; it is taken from
+# ../../out/Release/chrome, or from $BOOTOWSER_BROWSER. Override the sources
+# directory with `debian/rules binary` from the repository root, or set
+# BOOTOWSER_DEB_SRC to a prepared tree.
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	# ---- locate the prebuilt browser ------------------------------------
+	browser="$(BOOTOWSER_BROWSER)"; \
+	if [ -z "$$browser" ]; then \
+	  for c in ../../out/Release/chrome out/Release/chrome; do \
+	    if [ -x "$$c" ]; then browser="$$c"; break; fi; \
+	  done; \
+	fi; \
+	if [ -z "$$browser" ] || [ ! -x "$$browser" ]; then \
+	  echo "error: no Bootowser browser binary found." >&2; \
+	  echo "       Build it first:  cd browser && ./fetch.sh && ./build.sh" >&2; \
+	  exit 1; \
+	fi; \
+	echo "using browser binary: $$browser"
+
+	# ---- lay down the runtime tree --------------------------------------
+	install -d debian/bootowser/usr/lib/bootowser
+	install -d debian/bootowser/usr/share/bootowser
+	install -d debian/bootowser/usr/share/plymouth/themes/theme.bootowser
+	install -d debian/bootowser/etc/bootowser/policies/managed
+	install -d debian/bootowser/usr/share/doc/bootowser
+	install -d debian/bootowser/usr/share/licenses/bootowser
+
+	install -m 0755 runtime/bin/bootowser          debian/bootowser/usr/lib/bootowser/bootowser
+	install -m 0755 runtime/bin/bootowser-xsession debian/bootowser/usr/lib/bootowser/bootowser-xsession
+	install -m 0644 runtime/xorg/xorg.conf         debian/bootowser/usr/share/bootowser/xorg.conf
+
+	install -m 0644 runtime/lib/systemd/system/bootowser.service \
+	               debian/bootowser/lib/systemd/system/bootowser.service
+	install -m 0644 runtime/lib/systemd/system/bootowser-xserver.service \
+	               debian/bootowser/lib/systemd/system/bootowser-xserver.service
+
+	for f in plymouth/theme.bootowser/*; do \
+	  install -m 0644 "$$f" "debian/bootowser/usr/share/plymouth/themes/theme.bootowser/$$(basename $$f)"; \
+	done
+
+	install -m 0644 runtime/etc/bootowser/bootowser.conf \
+	               debian/bootowser/etc/bootowser/bootowser.conf
+	install -m 0644 runtime/etc/bootowser/policies/managed/bootowser.json \
+	               debian/bootowser/etc/bootowser/policies/managed/bootowser.json
+
+	# ---- the browser and the data it cannot start without ---------------
+	install -m 0755 "$$browser" debian/bootowser/usr/lib/bootowser/chrome
+	bdir=$$(dirname $$(readlink -f "$$browser")); \
+	if [ -f "$$bdir/icudtl.dat" ]; then \
+	  install -m 0644 "$$bdir/icudtl.dat" debian/bootowser/usr/lib/bootowser/; \
+	fi; \
+	for f in "$$bdir"/*.pak "$$bdir"/*.bin; do \
+	  [ -f "$$f" ] && install -m 0644 "$$f" debian/bootowser/usr/lib/bootowser/; \
+	done; \
+	for d in locales swiftshader; do \
+	  [ -d "$$bdir/$$d" ] && cp -a "$$bdir/$$d" debian/bootowser/usr/lib/bootowser/; \
+	done; \
+	if [ -f "$$bdir/chrome_sandbox" ]; then \
+	  install -m 4755 "$$bdir/chrome_sandbox" debian/bootowser/usr/lib/bootowser/chrome_sandbox; \
+	fi
+
+	install -m 0644 LICENSE debian/bootowser/usr/share/doc/bootowser/copyright
+	install -m 0644 README.md debian/bootowser/usr/share/doc/bootowser/README.md
+	install -m 0644 docs/security.md debian/bootowser/usr/share/doc/bootowser/security.md
+
+override_dh_auto_install:
+
+# Runtime state directory, owned by the kiosk user.
+override_dh_installsystemd:
+	dh_installsystemd --name=bootowser-xserver --no-enable --no-start
+	dh_installsystemd --name=bootowser --no-enable --no-start
+	dh_systemd_enable --no-enable bootowser.service bootowser-xserver.service || true
+
+override_dh_fixperms:
+	dh_fixperms
+	chmod 4755 debian/bootowser/usr/lib/bootowser/chrome_sandbox 2>/dev/null || true

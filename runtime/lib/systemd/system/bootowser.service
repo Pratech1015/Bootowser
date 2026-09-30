@@ -1,0 +1,78 @@
+[Unit]
+Description=Bootowser kiosk browser
+Documentation=https://github.com/Pratech1015/Bootowser
+
+# plymouth-quit-wait.service waits for the boot splash to actually go away.
+# Listing it in After= is harmless on systems that do not ship it (systemd
+# ignores ordering against units that do not exist), which is what keeps this
+# unit working on Debian, Fedora and Arch alike.
+After=bootowser-xserver.service plymouth-quit-wait.service systemd-user-sessions.service
+Requires=bootowser-xserver.service
+After=plymouth-quit-wait.service
+
+# The kiosk owns the console. Two things fighting over vt1 produces a flicker
+# at best and a deadlock at worst.
+Conflicts=getty@tty1.service
+
+# Give up rather than loop forever on a machine that cannot render. Raise
+# StartLimitBurst (or set it to 0) if you would rather it never give up.
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=bootowser
+Group=bootowser
+Environment=DISPLAY=:0
+Environment=BOOTOWSER_CONFIG=/etc/bootowser/bootowser.conf
+ExecStart=/usr/lib/bootowser/bootowser
+
+# A kiosk that shows a blank screen is a broken kiosk. Come back.
+Restart=always
+RestartSec=3
+
+# The browser is expected to have painted its first frame within this window.
+# A cold start on slow eMMC can take a while, so this is generous.
+TimeoutStartSec=180
+TimeoutStopSec=20
+KillSignal=SIGTERM
+KillMode=mixed
+
+# --- Hardening -------------------------------------------------------------
+# The browser runs unprivileged already; these keep a renderer exploit from
+# turning into a foothold.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+LockPersonality=true
+# Chromium needs a JIT-writable heap for V8 and WebAssembly.
+MemoryDenyWriteExecute=false
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# Chromium's sandbox needs to set up namespaces; without CAP_SYS_ADMIN the
+# setuid/namespace sandbox is the fallback and still works.
+CapabilityBoundingSet=
+
+# The profile is the only writable path the kiosk needs.
+ReadWritePaths=/var/lib/bootowser
+StateDirectory=bootowser
+StateDirectoryMode=0700
+
+# Only the journal, no syslog, no wall.
+SyslogIdentifier=bootowser
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical.target

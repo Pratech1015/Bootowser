@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+#
+# bootowser-xsession - start the minimal X server Bootowser renders into.
+#
+# Chromium needs a display server; it cannot paint on a bare text console.
+# Bootowser therefore ships a deliberately dumb X server configuration:
+#
+#   * no window manager      - kiosk windows do not need to be decorated or moved
+#   * no desktop environment - nothing to autostart, nothing to leak
+#   * no TCP listeners       - -nolisten tcp keeps it off the network entirely
+#   * a fixed screen mode    - deterministic, no mode probing at boot
+#
+# If you already run a display server (or want to run Bootowser inside a
+# desktop session), do not use this script: the browser launcher detects an
+# existing X socket and reuses it.
+#
+set -uo pipefail
+
+readonly PREFIX="${BOOTOWSER_PREFIX:-/usr}"
+readonly CONFIG="${BOOTOWSER_CONFIG:-/etc/bootowser/bootowser.conf}"
+readonly XORG_CONF="${BOOTOWSER_XORG_CONF:-${PREFIX}/share/bootowser/xorg.conf}"
+
+log() { printf 'bootowser-xsession: %s\n' "$*" >&2; }
+die() { printf 'bootowser-xsession: %s\n' "$*" >&2; exit 1; }
+
+dump_config() {
+  [ -r "${CONFIG}" ] || return 0
+  local line key val
+  while IFS= read -r line || [ -n "${line}" ]; do
+    case "${line}" in ''|'#'*|*=*) ;; *) continue ;; esac
+    key="${line%%=*}"; val="${line#*=}"
+    val="${val%\"}"; val="${val#\"}"
+    case "${key}" in [A-Z][A-Z0-9_]*) printf '%s=%q\n' "${key}" "${val}" ;; esac
+  done < "${CONFIG}"
+}
+
+if [ "${1:-}" = "--dump-config" ]; then
+  dump_config
+  exit 0
+fi
+
+eval "$("${BASH_SOURCE[0]}" --dump-config)"
+
+: "${SCREEN_SIZE:=auto}"
+: "${SCREEN_DEPTH:=24}"
+: "${SCREEN_REFRESH:=0}"
+: "${X_DISPLAY:=:0}"
+: "${XORG_BIN:=}"
+
+# --- Locate an X server ----------------------------------------------------
+if [ -z "${XORG_BIN}" ]; then
+  for candidate in Xorg Xvfb; do
+    if command -v "${candidate}" >/dev/null 2>&1; then
+      XORG_BIN="${candidate}"
+      break
+    fi
+  done
+fi
+
+[ -n "${XORG_BIN}" ] || die "no X server found. Install one of:
+   Debian/Ubuntu: apt install xserver-xorg-core
+   Fedora:        dnf install xorg-server11-xorg
+   Arch:          pacman -S xorg-server
+   Or set XORG_BIN to the path of an existing server."
+
+[ -r "${XORG_CONF}" ] || die "Xorg configuration not found at ${XORG_CONF}"
+
+# Xvfb has no mode setting; everything else runs against the real VT.
+if [ "${XORG_BIN##*/}" = "Xvfb" ]; then
+  [ "${SCREEN_SIZE}" = "auto" ] && SCREEN_SIZE="1920x1080"
+  log "starting Xvfb ${SCREEN_SIZE}x${SCREEN_DEPTH} on ${X_DISPLAY}"
+  exec "${XORG_BIN}" "${X_DISPLAY}" \
+    -screen 0 "${SCREEN_SIZE}x${SCREEN_DEPTH}" \
+    -nolisten tcp \
+    -noreset
+fi
+
+# --- Screen mode -----------------------------------------------------------
+MODE_ARGS=()
+if [ "${SCREEN_SIZE}" != "auto" ]; then
+  MODE_ARGS+=( "--mode" "${SCREEN_SIZE}" )
+else
+  # "auto" means: keep whatever mode the firmware/kernel already set for this
+  # VT. Xorg reads it from the DRM connector, so we pass nothing.
+  log "SCREEN_SIZE=auto: using the mode the console is already in"
+fi
+[ "${SCREEN_REFRESH}" -gt 0 ] 2>/dev/null && MODE_ARGS+=( "--rate" "${SCREEN_REFRESH}" )
+
+# --- Start -----------------------------------------------------------------
+# -noreset is deliberately omitted: if the X server dies we want the kiosk to
+# go down and systemd to notice, not to silently respawn a headless server.
+#
+# vt1 is hard-coded because this is the console Bootowser replaces. The
+# matching getty is masked by tools/install.sh so the two cannot fight over
+# the keyboard.
+VT="${BOOTOWSER_VT:-1}"
+
+log "starting ${XORG_BIN} on ${X_DISPLAY} (vt${VT})"
+exec "${XORG_BIN}" \
+  "${X_DISPLAY}" \
+  -config "${XORG_CONF}" \
+  -nolisten tcp \
+  -nolock \
+  "${MODE_ARGS[@]}" \
+  "vt${VT}"

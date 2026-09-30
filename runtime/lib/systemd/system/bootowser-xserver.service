@@ -1,0 +1,50 @@
+[Unit]
+Description=Bootowser display server
+Documentation=https://github.com/Pratech1015/Bootowser
+# The X server must own vt1 before anything tries to paint on it, which means
+# the console getty has to be out of the way. tools/install.sh masks it.
+Conflicts=getty@tty1.service
+After=systemd-udev-settle.service
+Before=bootowser.service
+
+# If X dies the kiosk is dead; restart it, but do not hot-loop. StartLimit*
+# belongs to [Unit], not [Service].
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+# The X server needs root to switch virtual terminals and become DRM master.
+User=root
+ExecStart=/usr/lib/bootowser/bootowser-xsession
+
+# If X dies the kiosk is dead; restart it, but do not hot-loop.
+Restart=on-failure
+RestartSec=2
+
+# --- Hardening -------------------------------------------------------------
+# Nothing here needs to write to the filesystem except its own config, and it
+# must not be able to reach the network.
+NoNewPrivileges=true
+PrivateTmp=false
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+MemoryDenyWriteExecute=true
+LockPersonality=true
+# The X server needs these and nothing more.
+DeviceAllow=/dev/dri rw
+DeviceAllow=/dev/tty0 rw
+DeviceAllow=/dev/input/event* rw
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,8 @@
+# The exact Chromium tag that browser/patches/ is written against.
+#
+# Do not change this without regenerating and re-verifying the patch series:
+#
+#     browser/verify-patches.sh          # fetches sources and checks the series
+#
+# See docs/browser.md for how to roll this forward.
+154.0.8037.92

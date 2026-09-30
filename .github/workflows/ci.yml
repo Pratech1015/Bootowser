@@ -1,0 +1,106 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shell:
+    name: shell scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck
+
+      - name: syntax check
+        run: |
+          set -euo pipefail
+          for f in browser/*.sh tools/*.sh runtime/bin/*; do
+            echo "::group::bash -n $f"
+            bash -n "$f"
+            echo "::endgroup::"
+          done
+          sh -n packaging/debian/postinst packaging/debian/postrm
+          bash -n packaging/arch/PKGBUILD packaging/debian/rules
+
+      - name: shellcheck
+        run: |
+          set -euo pipefail
+          shellcheck -s bash -S warning browser/*.sh tools/*.sh runtime/bin/*
+          # PKGBUILD: pkgdir/srcdir/depends etc. are injected by makepkg.
+          shellcheck -s bash -S warning -e SC2034,SC2154 packaging/arch/PKGBUILD
+
+  config:
+    name: configuration files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: managed policy is valid JSON with no stray keys
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, sys
+          path = "runtime/etc/bootowser/policies/managed/bootowser.json"
+          with open(path) as fh:
+              data = json.load(fh)
+          # Chromium rejects unknown members that are not valid policies, so a
+          # key starting with '_' would silently break the whole file.
+          bad = [k for k in data if k.startswith("_")]
+          if bad:
+              sys.exit(f"policy file has non-policy keys: {bad}")
+          print(f"ok: {len(data)} managed policies, all real")
+          PY
+
+      - name: config parses and every key is consumed by the launchers
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          fail=0
+          keys=$(grep -oE '^[A-Z][A-Z0-9_]*=' runtime/etc/bootowser/bootowser.conf \
+                 | tr -d '=' | sort -u)
+          used=$(cat runtime/bin/bootowser runtime/bin/bootowser-xsession \
+                 | grep -oE '\$\{[A-Z][A-Z0-9_]*(:-|:)?[A-Za-z0-9_]*[:}]' \
+                 | sed 's/[${}:-]//g' | sort -u)
+          for k in $keys; do
+            if ! grep -qx "$k" <<<"$used"; then
+              echo "::error file=runtime/etc/bootowser/bootowser.conf::$k is never read"
+              fail=1
+            fi
+          done
+          exit $fail
+
+      - name: systemd units
+        run: |
+          set -euo pipefail
+          # Substitute the macros so the units are syntactically complete.
+          sudo tee /usr/lib/systemd/system/bootowser.service >/dev/null \
+            < runtime/lib/systemd/system/bootowser.service
+          sudo tee /usr/lib/systemd/system/bootowser-xserver.service >/dev/null \
+            < runtime/lib/systemd/system/bootowser-xserver.service
+          systemd-analyze verify /usr/lib/systemd/system/bootowser.service \
+                                  /usr/lib/systemd/system/bootowser-xserver.service
+
+      - name: debian source package metadata
+        run: |
+          set -euo pipefail
+          cp -r packaging/debian /tmp/bootowser-debian
+          cd /tmp/bootowser-debian
+          test -f source/format && test -f control && test -f changelog
+          test -x rules && test -x postinst && test -x postrm
+
+  patches:
+    name: chromium patch series
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./tools/verify-patches.sh

@@ -1,0 +1,111 @@
+# Maintainer: Pratech1015 <pragyan.krish3@gmail.com>
+#
+# Bootowser: a stripped Chromium kiosk browser with a Plymouth boot splash.
+#
+# This package ships the *runtime*. The browser binary is expected to be
+# built already, because compiling Chromium is a multi-hour job that should
+# not happen on a user's machine during a package upgrade.
+#
+# Build the browser first:
+#     git clone https://github.com/Pratech1015/Bootowser
+#     cd Bootowser/browser && ./fetch.sh && ./build.sh
+#
+# then point this build at the result:
+#     BOOTOWSER_BROWSER=$PWD/../out/Release/chrome makepkg -s
+
+pkgname=bootowser
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Stripped Chromium kiosk browser with a Plymouth boot splash for Linux"
+arch=('x86_64')
+url="https://github.com/Pratech1015/Bootowser"
+license=('GPL3')
+depends=('systemd-libs' 'xorg-server')
+optdepends=('plymouth: boot splash theme' 'xorg-xset: display blanking' 'mesa: hardware acceleration')
+source=("$pkgname-$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+# Where the prebuilt browser lives. Overridable from the environment.
+: "${BOOTOWSER_BROWSER:=out/Release/chrome}"
+_root="$srcdir/$pkgname-$pkgver"
+pkgver() {
+  cd "$_root" || exit 1
+  head -n1 VERSION
+}
+
+build() {
+  cd "$_root" || exit 1
+
+  local browser="$BOOTOWSER_BROWSER"
+  [ -x "$browser" ] || browser="$_root/$BOOTOWSER_BROWSER"
+  if [ ! -x "$browser" ]; then
+    error "no Bootowser browser binary at '$browser'"
+    echo "Build it with:  cd browser && ./fetch.sh && ./build.sh" >&2
+    return 1
+  fi
+
+  local dest="$pkgdir"
+  install -Dm755 runtime/bin/bootowser          "$dest/usr/lib/bootowser/bootowser"
+  install -Dm755 runtime/bin/bootowser-xsession "$dest/usr/lib/bootowser/bootowser-xsession"
+  install -Dm644 runtime/xorg/xorg.conf         "$dest/usr/share/bootowser/xorg.conf"
+
+  install -Dm644 runtime/lib/systemd/system/bootowser.service \
+                 "$dest/usr/lib/systemd/system/bootowser.service"
+  install -Dm644 runtime/lib/systemd/system/bootowser-xserver.service \
+                 "$dest/usr/lib/systemd/system/bootowser-xserver.service"
+
+  local f
+  for f in plymouth/theme.bootowser/*; do
+    install -Dm644 "$f" "$dest/usr/share/plymouth/themes/theme.bootowser/$(basename "$f")"
+  done
+
+  install -Dm644 runtime/etc/bootowser/bootowser.conf \
+                 "$dest/etc/bootowser/bootowser.conf"
+  install -Dm644 runtime/etc/bootowser/policies/managed/bootowser.json \
+                 "$dest/etc/bootowser/policies/managed/bootowser.json"
+
+  # The browser plus the runtime data it cannot start without: without the
+  # .pak files and icudtl.dat Chromium starts and then renders nothing.
+  install -Dm755 "$browser" "$dest/usr/lib/bootowser/chrome"
+  local bdir; bdir="$(dirname "$(readlink -f "$browser")")"
+  local extra
+  if [ -f "$bdir/icudtl.dat" ]; then
+    install -Dm644 "$bdir/icudtl.dat" "$dest/usr/lib/bootowser/icudtl.dat"
+  fi
+  shopt -s nullglob
+  for extra in "$bdir"/*.pak "$bdir"/*.bin; do
+    install -Dm644 "$extra" "$dest/usr/lib/bootowser/$(basename "$extra")"
+  done
+  shopt -u nullglob
+  for extra in locales swiftshader; do
+    [ -d "$bdir/$extra" ] && cp -a "$bdir/$extra" "$dest/usr/lib/bootowser/"
+  done
+  if [ -f "$bdir/chrome_sandbox" ]; then
+    install -Dm4755 "$bdir/chrome_sandbox" "$dest/usr/lib/bootowser/chrome_sandbox"
+  fi
+
+  install -Dm644 LICENSE "$dest/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 README.md "$dest/usr/share/doc/$pkgname/README.md"
+  install -Dm644 docs/security.md "$dest/usr/share/doc/$pkgname/security.md"
+
+  # State directory, created by the package and owned by the kiosk user.
+  install -d -m 0700 -o bootowser -g bootowser "$dest/var/lib/bootowser/profile"
+
+  cat > "$dest/usr/lib/tmpfiles.d/bootowser.conf" <<'EOF'
+d /var/lib/bootowser 0700 bootowser bootowser - -
+EOF
+}
+
+package() {
+  cd "$pkgdir" || exit 1
+
+  # Chromium's SUID sandbox must stay root-owned and setuid.
+  chown -R root:root usr
+  chmod 4755 usr/lib/bootowser/chrome_sandbox 2>/dev/null || true
+  chmod 0644 etc/bootowser/bootowser.conf etc/bootowser/policies/managed/bootowser.json
+
+  # Expand the %i/%n specifiers by hand: makepkg does not run systemd macros.
+  for unit in usr/lib/systemd/system/bootowser*.service; do
+    sed -i 's|%i|bootowser|g; s|%n|bootowser|g' "$unit"
+  done
+}

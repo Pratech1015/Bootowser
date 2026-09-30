@@ -1,0 +1,24 @@
+#!/bin/sh
+# Post-removal for bootowser. See tools/uninstall.sh for the script version.
+set -e
+
+case "$1" in
+  purge)
+    # Give the console back: the kiosk masks the tty1 getty, and leaving it
+    # masked after removal would drop the user at a black screen with no login.
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl unmask getty@tty1.service >/dev/null 2>&1 || true
+      systemctl enable getty@tty1.service >/dev/null 2>&1 || true
+    fi
+    if getent passwd bootowser >/dev/null; then
+      deluser bootowser >/dev/null 2>&1 || true
+    fi
+    rm -rf /var/lib/bootowser /etc/bootowser
+    ;;
+  remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+    ;;
+esac
+
+#DEBHELPER#
+
+exit 0

@@ -1,0 +1,11 @@
+# Patches are mbox format-patch output: never let git touch their whitespace.
+browser/patches/*.patch -whitespace -text
+
+# Keep the runtime scripts and packaging byte-exact.
+runtime/** text eol=lf
+tools/** text eol=lf
+*.sh text eol=lf
+*.service text eol=lf
+*.plymouth text eol=lf
+
+*.png binary

@@ -1,0 +1,3 @@
+0001-chrome-switches-add-bootowser-switches.patch
+0002-chrome-main-delegate-enforce-kiosk-lockdown.patch
+0003-block-non-web-navigations-in-kiosk.patch
