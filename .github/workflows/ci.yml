@@ -86,13 +86,24 @@ jobs:
       - name: systemd units
         run: |
           set -euo pipefail
-          # Substitute the macros so the units are syntactically complete.
-          sudo tee /usr/lib/systemd/system/bootowser.service >/dev/null \
-            < runtime/lib/systemd/system/bootowser.service
-          sudo tee /usr/lib/systemd/system/bootowser-xserver.service >/dev/null \
-            < runtime/lib/systemd/system/bootowser-xserver.service
+          # systemd-analyze verify fails if ExecStart does not exist, so lay
+          # the runtime down the way install.sh does before checking. The
+          # browser binary itself is not needed for a syntax check.
+          sudo install -d -m 0755 /usr/lib/bootowser /usr/share/bootowser \
+                               /usr/lib/systemd/system /etc/bootowser/policies/managed
+          sudo install -m 0755 runtime/bin/bootowser          /usr/lib/bootowser/bootowser
+          sudo install -m 0755 runtime/bin/bootowser-xsession /usr/lib/bootowser/bootowser-xsession
+          sudo install -m 0644 runtime/xorg/xorg.conf         /usr/share/bootowser/xorg.conf
+          sudo install -m 0644 runtime/etc/bootowser/bootowser.conf /etc/bootowser/bootowser.conf
+          sudo install -m 0644 runtime/etc/bootowser/policies/managed/bootowser.json \
+                           /etc/bootowser/policies/managed/bootowser.json
+          sudo install -m 0644 runtime/lib/systemd/system/bootowser.service \
+                           /usr/lib/systemd/system/bootowser.service
+          sudo install -m 0644 runtime/lib/systemd/system/bootowser-xserver.service \
+                           /usr/lib/systemd/system/bootowser-xserver.service
           systemd-analyze verify /usr/lib/systemd/system/bootowser.service \
                                   /usr/lib/systemd/system/bootowser-xserver.service
+          echo "units verified"
 
       - name: debian source package metadata
         run: |
