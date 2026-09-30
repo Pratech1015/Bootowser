@@ -105,6 +105,44 @@ jobs:
                                   /usr/lib/systemd/system/bootowser-xserver.service
           echo "units verified"
 
+      - name: install layout round-trips without root
+        run: |
+          set -euo pipefail
+          # A throwaway prefix, with every root-only action skipped, so this
+          # works on a stock CI runner. Proves install.sh lays the tree out as
+          # documented and that no boot splash is installed.
+          prefix=/tmp/bootowser-prefix
+          rm -rf "$prefix"
+          ALLOW_UNPRIVILEGED_TESTING=1 ./tools/install.sh \
+            --prefix "$prefix" --no-mask-getty >/dev/null
+          test -x "$prefix/lib/bootowser/bootowser"
+          test -x "$prefix/lib/bootowser/bootowser-xsession"
+          test -f "$prefix/share/bootowser/xorg.conf"
+          test -f "$prefix/etc/bootowser/bootowser.conf"
+          test -f "$prefix/etc/bootowser/policies/managed/bootowser.json"
+          test -f "$prefix/lib/systemd/system/bootowser.service"
+          test -f "$prefix/lib/systemd/system/bootowser-xserver.service"
+          # Bootowser must not install or configure a boot splash.
+          test -z "$(find "$prefix" -ipath '*plymouth*' -print -quit)"
+          # And it must wait for whatever splash is already in use.
+          grep -q 'After=.*plymouth-quit-wait' \
+            "$prefix/lib/systemd/system/bootowser.service"
+          echo "install layout OK, no splash installed"
+
+          # uninstall.sh must be able to clean up the same tree.
+          ALLOW_UNPRIVILEGED_TESTING=1 ./tools/uninstall.sh \
+            --prefix "$prefix" --purge --yes >/dev/null
+          test -z "$(find "$prefix" -type f -print -quit)"
+          echo "uninstall layout OK"
+
+          # The dry-run escape hatch must stay confined to /tmp.
+          if ALLOW_UNPRIVILEGED_TESTING=1 ./tools/install.sh --prefix /usr \
+               >/dev/null 2>&1; then
+            echo "::error::ALLOW_UNPRIVILEGED_TESTING accepted a prefix outside /tmp"
+            exit 1
+          fi
+          echo "dry-run guard refuses non-/tmp prefixes"
+
       - name: debian source package metadata
         run: |
           set -euo pipefail

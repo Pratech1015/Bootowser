@@ -2,13 +2,15 @@
 Description=Bootowser kiosk browser
 Documentation=https://github.com/Pratech1015/Bootowser
 
-# plymouth-quit-wait.service waits for the boot splash to actually go away.
-# Listing it in After= is harmless on systems that do not ship it (systemd
-# ignores ordering against units that do not exist), which is what keeps this
-# unit working on Debian, Fedora and Arch alike.
+# Wait for whatever boot splash is in use to actually release the screen, so
+# the browser takes over cleanly instead of fighting it. Bootowser ships no
+# splash of its own: this is the distribution's existing Plymouth theme.
+#
+# Listing it in After= is harmless on systems that do not ship Plymouth at all
+# (systemd ignores ordering against units that do not exist), which is what
+# keeps this unit working on Debian, Fedora and Arch alike.
 After=bootowser-xserver.service plymouth-quit-wait.service systemd-user-sessions.service
 Requires=bootowser-xserver.service
-After=plymouth-quit-wait.service
 
 # The kiosk owns the console. Two things fighting over vt1 produces a flicker
 # at best and a deadlock at worst.

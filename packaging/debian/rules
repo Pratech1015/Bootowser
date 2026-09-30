@@ -30,7 +30,6 @@ override_dh_auto_build:
 	# ---- lay down the runtime tree --------------------------------------
 	install -d debian/bootowser/usr/lib/bootowser
 	install -d debian/bootowser/usr/share/bootowser
-	install -d debian/bootowser/usr/share/plymouth/themes/theme.bootowser
 	install -d debian/bootowser/etc/bootowser/policies/managed
 	install -d debian/bootowser/usr/share/doc/bootowser
 	install -d debian/bootowser/usr/share/licenses/bootowser
@@ -43,10 +42,6 @@ override_dh_auto_build:
 	               debian/bootowser/lib/systemd/system/bootowser.service
 	install -m 0644 runtime/lib/systemd/system/bootowser-xserver.service \
 	               debian/bootowser/lib/systemd/system/bootowser-xserver.service
-
-	for f in plymouth/theme.bootowser/*; do \
-	  install -m 0644 "$$f" "debian/bootowser/usr/share/plymouth/themes/theme.bootowser/$$(basename $$f)"; \
-	done
 
 	install -m 0644 runtime/etc/bootowser/bootowser.conf \
 	               debian/bootowser/etc/bootowser/bootowser.conf

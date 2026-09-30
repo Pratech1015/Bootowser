@@ -14,9 +14,9 @@ Depends: ${misc:Depends},
          systemd,
          xserver-xorg-core | xserver-xorg-video,
          x11-xserver-utils
-Recommends: plymouth, x11-xserver-utils
+Recommends: x11-xserver-utils
 Suggests: mesa-utils
-Description: stripped Chromium kiosk browser with a Plymouth boot splash
+Description: stripped Chromium kiosk browser that takes the screen at boot
  Bootowser replaces the boot splash with a real web browser. It is a
  stripped-down Chromium build -- no tabs, no omnibox, no settings, no
  extensions, no telemetry -- that starts automatically at boot and shows a
@@ -28,4 +28,7 @@ Description: stripped Chromium kiosk browser with a Plymouth boot splash
  .
  The browser binary is a separately built Chromium (see the browser/ directory
  in the upstream repository). This package ships the runtime, the systemd
- units, a minimal X server configuration and a Plymouth boot theme.
+ units and a minimal X server configuration. It ships no boot splash of its
+ own: whatever Plymouth theme the system already uses keeps showing during
+ boot, and Bootowser waits for plymouth-quit-wait.service before taking over
+ the screen.

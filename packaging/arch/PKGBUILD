@@ -1,6 +1,6 @@
 # Maintainer: Pratech1015 <pragyan.krish3@gmail.com>
 #
-# Bootowser: a stripped Chromium kiosk browser with a Plymouth boot splash.
+# Bootowser: a stripped Chromium kiosk browser that takes the screen at boot.
 #
 # This package ships the *runtime*. The browser binary is expected to be
 # built already, because compiling Chromium is a multi-hour job that should
@@ -16,12 +16,12 @@
 pkgname=bootowser
 pkgver=0.1.0
 pkgrel=1
-pkgdesc="Stripped Chromium kiosk browser with a Plymouth boot splash for Linux"
+pkgdesc="Stripped Chromium kiosk browser that takes the screen at boot"
 arch=('x86_64')
 url="https://github.com/Pratech1015/Bootowser"
 license=('GPL3')
 depends=('systemd-libs' 'xorg-server')
-optdepends=('plymouth: boot splash theme' 'xorg-xset: display blanking' 'mesa: hardware acceleration')
+optdepends=('xorg-xset: display blanking' 'mesa: hardware acceleration')
 source=("$pkgname-$pkgver.tar.gz")
 sha256sums=('SKIP')
 
@@ -53,11 +53,6 @@ build() {
                  "$dest/usr/lib/systemd/system/bootowser.service"
   install -Dm644 runtime/lib/systemd/system/bootowser-xserver.service \
                  "$dest/usr/lib/systemd/system/bootowser-xserver.service"
-
-  local f
-  for f in plymouth/theme.bootowser/*; do
-    install -Dm644 "$f" "$dest/usr/share/plymouth/themes/theme.bootowser/$(basename "$f")"
-  done
 
   install -Dm644 runtime/etc/bootowser/bootowser.conf \
                  "$dest/etc/bootowser/bootowser.conf"

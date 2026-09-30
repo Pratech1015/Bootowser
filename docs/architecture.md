@@ -7,9 +7,9 @@ configuration that keeps them honest.
         firmware / bootloader
                  |
                  v
-        +-------------------+   systemd runs every unit while the
-        |     plymouthd     |   splash is on screen; Bootowser's theme
-        |  (theme.bootowser)|   draws the progress bar
+        +-------------------+   your distribution's existing boot
+        |     plymouthd     |   splash. Bootowser ships none of its
+        |  (stock theme)    |   own and never touches this.
         +-------------------+
                  |  plymouth-quit-wait.service
                  v
@@ -83,22 +83,28 @@ A `NavigationThrottle` that cancels any main-frame navigation which is not
 http, https or `about:blank`. Policy's `URLBlocklist` is a runtime control an
 operator can weaken; this is not.
 
-## The Plymouth hand-off
+## Taking the screen from the boot splash
 
-The splash stays up while the system boots and is doing useful work — that is
-the whole point. `bootowser.service` declares:
+Bootowser ships **no boot splash of its own**. It installs nothing into
+`/usr/share/plymouth/themes` and never invokes `plymouth`, so the theme you
+already had keeps behaving exactly as it did — including on encrypted roots,
+where it still renders the passphrase prompt. Bootowser does not have to
+solve that problem, because it is not in the way.
+
+The hand-off is one line in `bootowser.service`:
 
 ```
 After=bootowser-xserver.service plymouth-quit-wait.service
 ```
 
-`plymouth-quit-wait.service` blocks until plymouth has actually released the
-screen. Listing it in `After=` is harmless on distributions that do not ship
-it, because systemd ignores ordering against units that do not exist. That is
-what keeps the same unit file working on Debian, Fedora and Arch.
+`plymouth-quit-wait.service` blocks until Plymouth has genuinely released the
+screen, so Bootowser never draws over a splash that is still up. Listing it in
+`After=` is harmless on a distribution that does not ship Plymouth at all,
+because systemd ignores ordering against units that do not exist — which is
+what keeps one unit file working on Debian, Fedora and Arch.
 
-The visible result: progress bar fills, splash goes away, browser appears.
-No flicker, no desktop, no login screen.
+The visible result: your boot splash does what it always did, then the browser
+appears. No flicker, no desktop, no login screen in between.
 
 ## Why the patch series is only three patches
 

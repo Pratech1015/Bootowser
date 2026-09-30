@@ -3,7 +3,7 @@
 Name:           bootowser
 Version:        0.1.0
 Release:        1%{?dist}
-Summary:        Stripped Chromium kiosk browser with a Plymouth boot splash
+Summary:        Stripped Chromium kiosk browser that takes the screen at boot
 
 License:        GPL-3.0-or-later
 URL:            https://github.com/Pratech1015/Bootowser
@@ -12,7 +12,6 @@ Source0:        %{name}-%{version}.tar.gz
 BuildRequires:  systemd-devel
 Requires:       systemd-libs
 Requires:       xorg-server
-Recommends:     plymouth
 Recommends:     xorg-x11-utils
 Suggests:       mesa-dri-drivers
 
@@ -65,7 +64,6 @@ bdir="$(dirname "$(readlink -f "$browser")")"
 rm -rf %{buildroot}
 mkdir -p %{buildroot}%{_prefix}/lib/bootowser
 mkdir -p %{buildroot}%{_datadir}/bootowser
-mkdir -p %{buildroot}%{_datadir}/plymouth/themes/theme.bootowser
 mkdir -p %{buildroot}%{_sysconfdir}/bootowser/policies/managed
 mkdir -p %{buildroot}%{_docdir}/bootowser
 mkdir -p %{buildroot}%{_unitdir}
@@ -77,10 +75,6 @@ install -p -m 0644 runtime/xorg/xorg.conf         %{buildroot}%{_datadir}/bootow
 
 install -p -m 0644 runtime/lib/systemd/system/bootowser.service          %{buildroot}%{_unitdir}/bootowser.service
 install -p -m 0644 runtime/lib/systemd/system/bootowser-xserver.service %{buildroot}%{_unitdir}/bootowser-xserver.service
-
-for f in plymouth/theme.bootowser/*; do
-  install -p -m 0644 "$f" %{buildroot}%{_datadir}/plymouth/themes/theme.bootowser/$(basename "$f")
-done
 
 install -p -m 0644 runtime/etc/bootowser/bootowser.conf \
                  %{buildroot}%{_sysconfdir}/bootowser/bootowser.conf
@@ -134,7 +128,6 @@ usermod -a -G video,render bootowser >/dev/null 2>&1 || :
 %{_prefix}/lib/bootowser/*.bin
 %{_prefix}/lib/bootowser/icudtl.dat
 %{_datadir}/bootowser/xorg.conf
-%{_datadir}/plymouth/themes/theme.bootowser
 %config(noreplace) %{_sysconfdir}/bootowser/bootowser.conf
 %config(noreplace) %{_sysconfdir}/bootowser/policies/managed/bootowser.json
 %attr(0700,bootowser,bootowser) %dir %{_localstatedir}/lib/bootowser/profile
@@ -146,4 +139,5 @@ usermod -a -G video,render bootowser >/dev/null 2>&1 || :
 %changelog
 * Wed Sep 30 2026 Pratech1015 <pragyan.krish3@gmail.com> - 0.1.0-1
 - Initial release: stripped Chromium kiosk browser runtime, systemd units,
-  minimal X server configuration and the theme.bootowser Plymouth splash.
+  minimal X server configuration. No boot splash is shipped; the browser
+  waits for the system's existing Plymouth theme to finish.

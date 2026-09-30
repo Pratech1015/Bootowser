@@ -6,6 +6,5 @@ runtime/** text eol=lf
 tools/** text eol=lf
 *.sh text eol=lf
 *.service text eol=lf
-*.plymouth text eol=lf
 
 *.png binary

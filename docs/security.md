@@ -41,26 +41,30 @@ is a switch nobody remembers to turn off.
 
 ## Encrypted root filesystems (LUKS)
 
-**Bootowser does not support rendering a Plymouth passphrase prompt.**
+**Not a problem, by design.**
 
-Plymouth's raw key handler delivers numeric keycodes, and its scripting
-language has no verified way to convert those back into characters. Rather
-than ship a passphrase field we could not test, `theme.bootowser` detects that
-a question is pending, hides the progress bar, and says so:
+Earlier revisions of this project shipped a Plymouth theme of their own, which
+meant a custom theme had to render the passphrase prompt during early boot.
+Plymouth's raw key handler delivers numeric keycodes and its scripting language
+has no verified way to turn those back into characters, so a passphrase field
+in a custom theme is a genuinely hard thing to get right.
 
-> This device needs to be unlocked before Bootowser can start
+Bootowser ships no boot splash. It installs nothing into
+`/usr/share/plymouth/themes` and runs no `plymouth` command, so your
+distribution's own theme keeps handling the unlock prompt exactly as it did
+before. `bootowser.service` orders itself after
+`plymouth-quit-wait.service`, so the browser appears only once the machine is
+unlocked and the splash has been released.
 
-If your root filesystem is encrypted, keep your distribution's **default**
-Plymouth theme and enable Bootowser after unlock:
+If you would still rather have the browser come up as early as possible after
+unlock, add a drop-in:
 
 ```ini
+# /etc/systemd/system/bootowser.service.d/unlock.conf
 [Unit]
 Wants=bootowser.service
-After=systemd-cryptsetup.target bootowser-xserver.service
+After=systemd-cryptsetup.target
 ```
-
-Alternatively, move the unlock step out of the initramfs (network-bound
-unlock, a TPM-sealed key, or `crypttab` with `x-systemd.device-timeout`).
 
 ## What the lockdown actually removes
 

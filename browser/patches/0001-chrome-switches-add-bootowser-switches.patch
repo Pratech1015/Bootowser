@@ -40,7 +40,7 @@ index a1e9d62..1ac54c2 100644
 +inline constexpr char kBootowserConfig[] = "bootowser-config";
 +
 +// Emits one structured line per boot phase on stderr. Used by the systemd
-+// unit to order the Plymouth hand-off after the browser is ready.
++// unit to order the hand-off from the boot splash after the browser is ready.
 +inline constexpr char kBootowserVerbose[] = "bootowser-verbose";
 +
  // Makes Chrome default browser

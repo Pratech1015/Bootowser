@@ -6,18 +6,17 @@
 # operator's config, because silently deleting a device's kiosk profile is a
 # nasty surprise. Pass --purge to remove those too.
 #
+# Bootowser ships no Plymouth theme of its own, so there is nothing here to
+# restore: whatever boot splash the machine used before is still configured.
+#
 set -euo pipefail
 
-readonly PREFIX="${BOOTOWSER_PREFIX:-/usr}"
-readonly LIB_DIR="${PREFIX}/lib/bootowser"
-readonly SHARE_DIR="${PREFIX}/share/bootowser"
-readonly UNIT_DIR="${PREFIX}/lib/systemd/system"
-readonly THEME_DIR="${PREFIX}/share/plymouth/themes/theme.bootowser"
-readonly ETC_DIR="/etc/bootowser"
-readonly STATE_DIR="/var/lib/bootowser"
+# Mutable so --prefix works; the derived paths are computed after parsing.
+PREFIX="${BOOTOWSER_PREFIX:-/usr}"
+ETC_DIR="${BOOTOWSER_ETC_DIR:-/etc/bootowser}"
+STATE_DIR="${BOOTOWSER_STATE_DIR:-/var/lib/bootowser}"
 
 PURGE=0
-KEEP_THEME=0
 ASSUME_NO=0
 
 usage() {
@@ -25,7 +24,7 @@ usage() {
 Usage: ${0##*/} [options]
 
   --purge         also delete ${STATE_DIR} (browser profile) and ${ETC_DIR}
-  --keep-theme    leave the Plymouth theme installed
+  --prefix DIR    act on DIR instead of ${PREFIX} (for testing)
   --yes           do not prompt for confirmation
   -h, --help      show this help
 EOF
@@ -34,7 +33,7 @@ EOF
 while [ $# -gt 0 ]; do
   case "$1" in
     --purge)      PURGE=1; shift ;;
-    --keep-theme) KEEP_THEME=1; shift ;;
+    --prefix)     PREFIX="$2"; shift 2 ;;
     --yes|-y)     ASSUME_NO=1; shift ;;
     -h|--help)    usage; exit 0 ;;
     *) echo "error: unknown argument '$1'" >&2; usage >&2; exit 2 ;;
@@ -54,10 +53,33 @@ log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
-[ "$(id -u)" -eq 0 ] || die "must be run as root"
+LIB_DIR="${PREFIX}/lib/bootowser"
+SHARE_DIR="${PREFIX}/share/bootowser"
+UNIT_DIR="${PREFIX}/lib/systemd/system"
+
+# Mirrors install.sh: refuse to touch systemd or /etc unless we are root,
+# but allow a dry run against a throwaway prefix so the layout is testable.
+if [ "$(id -u)" -ne 0 ]; then
+  if [ "${ALLOW_UNPRIVILEGED_TESTING:-0}" != 1 ]; then
+    die "must be run as root (or set ALLOW_UNPRIVILEGED_TESTING=1 for a dry run)"
+  fi
+  case "${PREFIX}" in
+    /tmp/*|/var/tmp/*) : ;;
+    *) die "ALLOW_UNPRIVILEGED_TESTING requires a --prefix under /tmp" ;;
+  esac
+  warn "running unprivileged against ${PREFIX}; this is a dry run"
+  UNPRIV=1
+  ETC_DIR="${PREFIX}/etc/bootowser"
+  STATE_DIR="${PREFIX}/var/lib/bootowser"
+else
+  UNPRIV=0
+fi
+readonly LIB_DIR SHARE_DIR UNIT_DIR ETC_DIR STATE_DIR
 
 # --- Stop and disable ------------------------------------------------------
-if command -v systemctl >/dev/null 2>&1; then
+if [ "${UNPRIV}" -eq 1 ]; then
+  warn "dry run: not touching systemd"
+elif command -v systemctl >/dev/null 2>&1; then
   log "stopping and disabling bootowser units"
   systemctl disable --now bootowser.service bootowser-xserver.service 2>/dev/null || true
 
@@ -70,28 +92,20 @@ if command -v systemctl >/dev/null 2>&1; then
     systemctl enable getty@tty1.service 2>/dev/null || true
   fi
 
-  log "restoring the previous Plymouth theme if possible"
-  if command -v plymouth >/dev/null 2>&1 && [ "${KEEP_THEME}" -eq 0 ]; then
-    plymouth set-default-theme 2>/dev/null || warn "could not restore the default Plymouth theme"
-    plymouth update-theme 2>/dev/null || true
-  fi
-
-  rm -f "${UNIT_DIR}/bootowser.service" "${UNIT_DIR}/bootowser-xserver.service"
   systemctl daemon-reload
   systemctl reset-failed bootowser.service 2>/dev/null || true
 fi
 
 # --- Files -----------------------------------------------------------------
+# The unit files are removed regardless of whether systemd was reachable, so a
+# --prefix dry run still cleans up after itself.
+rm -f "${UNIT_DIR}/bootowser.service" "${UNIT_DIR}/bootowser-xserver.service"
+
 log "removing ${LIB_DIR}"
 rm -rf "${LIB_DIR}"
 
 log "removing ${SHARE_DIR}"
 rm -rf "${SHARE_DIR}"
-
-if [ "${KEEP_THEME}" -eq 0 ]; then
-  log "removing ${THEME_DIR}"
-  rm -rf "${THEME_DIR}"
-fi
 
 if [ "${PURGE}" -eq 1 ]; then
   log "purging ${STATE_DIR} and ${ETC_DIR}"

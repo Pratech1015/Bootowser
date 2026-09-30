@@ -7,20 +7,10 @@ fullscreen web page. No tabs. No omnibox. No settings. No extensions. No
 telemetry. It starts at boot and shows the page you chose, and that is the
 entire user interface.
 
-```
-   _______________________________
-  |  ###   ###  ###  ###  ###     |
-  |                               |
-  |        Bootowser             |
-  |   a boot splash that          |
-  |   keeps going                 |
-  |                               |
-  |===============================|
-  | #####                         |
-  |===============================|
-  | 05 / 12                        |
-  |_  ____________________________|
-```
+Your boot splash stays exactly as it is. Bootowser ships no splash of its own:
+whatever Plymouth theme your distribution already uses finishes booting, then
+the browser takes the screen. Nothing about your existing boot looks different
+until Bootowser is ready to replace it.
 
 ## What it is for
 
@@ -35,15 +25,16 @@ device needs:
 If you want a browser you can browse in, use Firefox. If you want a computer
 that shows exactly one page and cannot be wandered off from, this is that.
 
-## Why the boot splash matters
+## Why it starts on the boot screen
 
 Most kiosk setups boot into a window manager, wait for the network, wait for a
 session, wait for a window manager plugin, and then *maybe* show a page. The
 user stares at a spinner for ninety seconds.
 
-Bootowser's Plymouth theme fills that time with real progress and a design
-that matches the browser that is coming. The splash stays up until the display
-server is genuinely ready, so the hand-off has no flash and no dead frame.
+Bootowser skips all of that. It orders itself after
+`plymouth-quit-wait.service`, so your existing boot splash stays up until the
+display server is genuinely ready and then gets out of the way — no flash, no
+dead frame, no desktop in between.
 
 ## Install
 
@@ -97,17 +88,23 @@ All four expect an already-built Chromium binary rather than building it for
 you, because a multi-hour compile has no business happening during
 `pacman -Syu`.
 
-### Plymouth
+### The boot splash
+
+There is nothing to configure. Bootowser does not install, replace or
+configure any boot splash, and it does not need to: it simply orders itself
+after `plymouth-quit-wait.service`, so your existing theme gets to finish
+first.
+
+One thing is worth doing, because it is about your bootloader rather than
+about Bootowser — if you want the kiosk without seeing the bootloader menu on
+every boot:
 
 ```sh
-sudo bootctl set-timeout 0        # you probably want this too
-sudo update-plymouth "theme.bootowser"
-sudo grub-mkconfig -o /boot/grub/grub.cfg     # or your bootloader
+sudo bootctl set-timeout 0
 ```
 
-Keep your distribution's **default** theme if your root filesystem is
-encrypted: Bootowser deliberately does not attempt to render a LUKS passphrase
-prompt. [Why.](docs/security.md#encrypted-root-filesystems-luks)
+On encrypted root filesystems the passphrase prompt keeps working normally,
+since there is no Bootowser theme sitting in its way.
 
 ## Configuration
 
@@ -160,8 +157,6 @@ This is an early project. Be honest about what that means:
   what it claims. It has **not** been run through a full Chromium build by
   the author, because the machine it was written on had 1.9 GB of free disk.
   Expect to fix compile errors on your first real build.
-- The Plymouth theme is syntax-checked but has not been seen on real hardware
-  by the author.
 - No prebuilt packages are published. You build it.
 
 Read [docs/building.md](docs/building.md) before starting.
