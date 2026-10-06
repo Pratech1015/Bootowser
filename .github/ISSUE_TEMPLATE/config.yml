@@ -3,9 +3,9 @@ contact_links:
   - name: Security vulnerability
     url: https://github.com/Pratech1015/Bootowser/security/advisories/new
     about: Report a kiosk escape privately. Please do not open a public issue.
-  - name: Building Chromium
+  - name: Building Firefox
     url: https://github.com/Pratech1015/Bootowser/blob/main/docs/building.md
-    about: Dependencies, disk and RAM requirements, and rolling Chromium forward.
+    about: Dependencies, disk and RAM requirements, artifact builds, and when you do not need to build at all.
   - name: Security model and known limitations
     url: https://github.com/Pratech1015/Bootowser/blob/main/docs/security.md
     about: What Bootowser does and does not protect you from, including LUKS.

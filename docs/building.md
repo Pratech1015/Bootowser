@@ -78,6 +78,7 @@ policy file. The patch series in `firefox/patches/` compiles the lockdown in:
 | `0003` | renames the product to Bootowser: binary, window title, profile, vendor, UA |
 | `0004` | removes the unused browser chrome: 28 dead key bindings and the F10 menu-bar handler compiled out, the rest hidden by CSS |
 | `0005` | strips the crash reporter, updater and Normandy (remote experiments) so nothing can pop a GUI over the kiosk display; also stops `--version` printing the brand twice |
+| `0006` | adds `toolkit/bootowser-control/`, the page-driven command sidecar, which builds into `dist/bin/bootowser-control` alongside the browser |
 
 `--check` applies the series in a throwaway `git worktree` and throws it
 away, so it never touches your tree and works whether or not you have already

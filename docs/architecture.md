@@ -130,6 +130,24 @@ There is also no launcher-side switch filter, because Firefox has no CDP
 endpoint for one to be aimed at. `EXTRA_SWITCHES` is therefore root-only
 territory.
 
+## The control sidecar
+
+`bootowser-control` (patch `0006`, built from `toolkit/bootowser-control/`)
+is the kiosk page's way back out to the device: a loopback-only HTTP API
+that runs shell commands as the kiosk user and root hooks via `sudo -n`.
+It is a **separate process in a separate systemd unit**, not part of the
+browser, because `bootowser.service` runs Firefox with
+`NoNewPrivileges=true` — nothing inside that process can ever exec a setuid
+binary, so an in-browser `sudo` is a kernel-level impossibility, not a
+policy question. The unit's `Wants=`/`After=` on `bootowser-control.service`
+means the API is listening before the page loads;
+`ConditionPathExists=/usr/lib/bootowser/bootowser-control` makes installs
+without a patched tree run featureless instead of broken.
+
+The full API, configuration and the security reasoning live in
+[docs/control.md](control.md); the threat-model consequences in
+[docs/security.md](security.md#the-command-control-api).
+
 ## Taking the screen from the boot splash
 
 Bootowser ships **no boot splash of its own**. It installs nothing into

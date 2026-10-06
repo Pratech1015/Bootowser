@@ -112,6 +112,41 @@ kiosk whose lockdown can be undone from inside the browser is not locked down.
 If you build without `--enable-bootowser`, none of this is compiled in and you
 have stock Firefox plus a policy file.
 
+## The command control API
+
+The kiosk page can ask the device to run shell commands. That is a deliberate
+capability, so it needs a deliberate boundary; full reference in
+[control.md](control.md). In this model:
+
+- **`/v1/exec` is not an escalation.** It runs `sh -c` as the kiosk user —
+  the same user the page already is. Its blast radius is what the page could
+  do with a form anyway; it exists for ergonomics, not privilege.
+- **The origin header is the boundary.** Only pages from `ALLOWED_ORIGINS`
+  (your `START_URL`'s origin) may call the API at all, and the sidecar binds
+  loopback only. A page the kiosk was steered onto by a redirect still gets
+  `403` unless you allowed its origin — one reason to keep the navigation
+  allow-list and `ALLOWED_ORIGINS` in sync.
+- **Root is script-shaped, not shell-shaped.** `/v1/root` runs only files
+  directly inside `/usr/lib/bootowser/commands/`, which must be root-owned,
+  not group/world-writable, via a sudoers rule that names exactly that
+  directory. The page cannot pass a root shell, a path, or an `arg` that
+  breaks out of the script's own parsing — and any script shipped there must
+  treat its arguments as hostile, because they are.
+- **The sidecar cannot be the weak link by accident.** It runs as the kiosk
+  user in its own hardened unit (`NoNewPrivileges=false` is the deliberate
+  exception, so `sudo` can work — see the unit's comments), never as root,
+  and audits every execution to the journal.
+
+What this does change: **the origin allow-list becomes part of your security
+boundary.** If you widen `ALLOWED_ORIGINS`, you are handing shell access on
+the kiosk user — and script access as root, if you ship hooks — to every
+page at that origin.
+
+Local Network Access locking (`network.lna.enabled` /
+`network.lna.blocking` = `false`) is part of this feature: without it
+Firefox 156 refuses or prompts for the page's loopback fetches. Both prefs
+stay locked in the policy file.
+
 ## No sandbox hardening from upstream's threat model
 
 Firefox's content sandbox is present and enabled. That sandbox exists to

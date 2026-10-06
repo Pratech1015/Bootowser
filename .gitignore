@@ -1,17 +1,17 @@
-# Chromium build trees and output.
-# fetch.sh checks out into /src, build.sh writes to /out.
+# Firefox build trees and objdir output.
+#
+# fetch.sh checks out wherever --dest points (default ~/firefox-src, outside
+# the repo), but an operator can still put the tree inside the checkout.
+# firefox/mozconfig-bootowser sets MOZ_OBJDIR to ../obj-bootowser.
+#
+# A Firefox checkout is ~5 GB and the objdir reaches ~20 GB after a build.
+# Never commit one by accident.
+/firefox/src/
+/firefox/firefox-src/
+/firefox/obj-bootowser/
+/firefox/obj-*/
 /src/
 /out/
-*.ninja
-*.ninja_log
-*.ninja_deps
-
-# depot_tools defaults to ~/depot_tools, but --depot-tools or an overridden
-# HOME can put it inside the tree. Chromium checkouts are ~40 GB; never commit
-# one by accident.
-/depot_tools/
-/browser/depot_tools/
-/src/
 
 # Editor / OS noise
 *.swp

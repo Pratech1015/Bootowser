@@ -38,21 +38,30 @@ Desktop environment, or "none, kiosk only":
 START_URL=""
 ```
 
-## Chromium version
+## Firefox version and source
 
 ```
-$ cat browser/CHROMIUM_VERSION
+$ bootowser --version
 ```
 
-## Build
-
-Did the patch series apply cleanly, or did you have to fix it up?
+If you are running your own build rather than your distribution's package,
+also include:
 
 ```
-$ cd browser && ../tools/verify-patches.sh
+$ grep DEFAULT_VERSION firefox/fetch.sh
 ```
 
-Paste anything it printed.
+## How Firefox was installed
+
+Which of these is true?
+
+- [ ] distribution package (the default; `install.sh` with no `--browser`)
+- [ ] a build from `firefox/fetch.sh`
+- [ ] something else
+
+If it is a local build, say whether the machine is short on disk. A partially
+finished build produces a browser that starts and then renders nothing, which
+looks like a Bootowser bug.
 
 ## Logs
 
