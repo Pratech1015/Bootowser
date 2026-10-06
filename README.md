@@ -136,7 +136,8 @@ There is deliberately no allow-exit switch, and no way to add one from here.
 If you use the command control API, its keys live separately in
 `/etc/bootowser/control.conf` — most importantly `ALLOWED_ORIGINS`, which
 must match your `START_URL`'s origin. See
-[docs/control.md](docs/control.md) for the API and
+[docs/page-guide.md](docs/page-guide.md) for building a page that talks
+to it, [docs/control.md](docs/control.md) for the API and
 [docs/security.md](docs/security.md#the-command-control-api) for what
 allowing an origin means.
 
@@ -190,6 +191,7 @@ This is an early project. Be honest about what that means:
 | [docs/architecture.md](docs/architecture.md) | how the pieces hand off, and the lockdown layers |
 | [docs/building.md](docs/building.md) | requirements, fetching and building Firefox |
 | [docs/control.md](docs/control.md) | the page-driven command API: endpoints, config, root hooks |
+| [docs/page-guide.md](docs/page-guide.md) | hands-on: add shell commands and build the page that runs them |
 | [docs/security.md](docs/security.md) | what this does and does not protect you from |
 
 ## Licence

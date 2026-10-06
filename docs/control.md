@@ -3,7 +3,8 @@
 Bootowser can run shell commands on behalf of the kiosk page: a button on
 your page can restart the kiosk, clear the profile or run a root-owned
 script you shipped. This document is how that works, what stops it from
-being a hole, and how to test it.
+being a hole, and how to test it. To skip straight to building the page
+and adding commands, start with [page-guide.md](page-guide.md).
 
 ## Why a sidecar
 
