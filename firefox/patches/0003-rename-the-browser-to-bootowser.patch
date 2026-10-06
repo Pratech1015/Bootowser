@@ -1,0 +1,148 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bootowser <b@o.local>
+Date: Sun, 4 Oct 2026 09:12:41 +0530
+Subject: [PATCH] [Bootowser] rename the browser to bootowser
+
+Patches 0001 and 0002 decide what the kiosk may do; this one decides
+what it calls itself. Everything user-visible that says Firefox now
+says Bootowser: the window title, the about dialog, the app menu,
+the default browser check, --version.
+
+The identity is split across three places, and it is worth being
+explicit about why each one lives where it does:
+
+  * --with-app-name=bootowser, in mozconfig-bootowser, renames the
+    executable. That option is MOZ_APP_NAME, which is a plain option
+    and so can be set from a mozconfig.
+
+  * MOZ_APP_VENDOR, MOZ_APP_PROFILE and MOZ_APP_UA_NAME cannot be.
+    They are project_flags, and configure rejects a mozconfig that
+    tries with "can not be set by mozconfig. Values are accepted
+    from: implied". Hence the imply_options below.
+
+  * The brand strings themselves are branding data, not build
+    configuration, so they are edited where they live rather than
+    overridden: browser/branding/unofficial is the directory this
+    build actually uses, because browser/confvars.sh points
+    MOZ_BRANDING_DIRECTORY at it and nothing passes --with-branding.
+
+The one deliberate exception is the User Agent, which stays
+Firefox/<version>. MOZ_APP_UA_NAME defaults to empty, and an empty
+one makes nsHttpHandler fall back to application.ini's "Name", so
+without pinning it every page would be served "bootowser/156.0" and
+the sites a kiosk exists to display would be free to treat it as a
+bot. The HTTP-facing identity is not part of the rebrand.
+
+The two update URLs pointed at nightly.mozilla.org. Updates are
+disabled by policy and there is no Bootowser update service, so they
+now resolve to about:blank: nothing in the build should be able to
+reach a Mozilla endpoint even if a policy stops being applied.
+
+MOZ_APP_ID is left at Firefox's GUID. It keys the crash reporter
+submission URL and the update channel, both of which still point at
+Mozilla infrastructure; a fresh GUID would only orphan them.
+---
+ browser/branding/unofficial/configure.sh      |  2 +-
+ .../unofficial/locales/en-US/brand.ftl        | 12 +++++------
+ .../unofficial/locales/en-US/brand.properties |  6 +++---
+ .../unofficial/pref/firefox-branding.js       |  4 ++--
+ browser/moz.configure                         | 21 ++++++++++++++++++-
+ 5 files changed, 32 insertions(+), 13 deletions(-)
+
+diff --git a/browser/branding/unofficial/configure.sh b/browser/branding/unofficial/configure.sh
+index f42e11ddad..a10dfbda84 100644
+--- a/browser/branding/unofficial/configure.sh
++++ b/browser/branding/unofficial/configure.sh
+@@ -2,5 +2,5 @@
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+ # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ 
+-MOZ_APP_DISPLAYNAME=Nightly
++MOZ_APP_DISPLAYNAME=Bootowser
+ MOZ_MACBUNDLE_ID=nightlyunofficial
+diff --git a/browser/branding/unofficial/locales/en-US/brand.ftl b/browser/branding/unofficial/locales/en-US/brand.ftl
+index 5eaea9a7c4..1ba13d0424 100644
+--- a/browser/branding/unofficial/locales/en-US/brand.ftl
++++ b/browser/branding/unofficial/locales/en-US/brand.ftl
+@@ -16,12 +16,12 @@
+ ## For further details, consult:
+ ## https://mozilla-l10n.github.io/styleguides/mozilla_general/#brands-copyright-and-trademark
+ 
+--brand-shorter-name = Nightly
+--brand-short-name = Nightly
+--brand-shortcut-name = Nightly
+--brand-full-name = Nightly
++-brand-shorter-name = Bootowser
++-brand-short-name = Bootowser
++-brand-shortcut-name = Bootowser
++-brand-full-name = Bootowser
+ # This brand name can be used in messages where the product name needs to
+ # remain unchanged across different versions (Nightly, Beta, etc.).
+--brand-product-name = Firefox
+--vendor-short-name = Mozilla
++-brand-product-name = Bootowser
++-vendor-short-name = Bootowser
+ trademarkInfo = { " " }
+diff --git a/browser/branding/unofficial/locales/en-US/brand.properties b/browser/branding/unofficial/locales/en-US/brand.properties
+index 346c3bdb50..c2d4560f3c 100644
+--- a/browser/branding/unofficial/locales/en-US/brand.properties
++++ b/browser/branding/unofficial/locales/en-US/brand.properties
+@@ -2,6 +2,6 @@
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+ # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ 
+-brandShorterName=Nightly
+-brandShortName=Nightly
+-brandFullName=Nightly
++brandShorterName=Bootowser
++brandShortName=Bootowser
++brandFullName=Bootowser
+diff --git a/browser/branding/unofficial/pref/firefox-branding.js b/browser/branding/unofficial/pref/firefox-branding.js
+index f22dd0a51c..cc26a15c9b 100644
+--- a/browser/branding/unofficial/pref/firefox-branding.js
++++ b/browser/branding/unofficial/pref/firefox-branding.js
+@@ -13,10 +13,10 @@ pref("app.update.interval", 86400); // 24 hours
+ pref("app.update.promptWaitTime", 86400);
+ // URL user can browse to manually if for some reason all update installation
+ // attempts fail.
+-pref("app.update.url.manual", "https://nightly.mozilla.org");
++pref("app.update.url.manual", "about:blank");
+ // A default value for the "More information about this update" link
+ // supplied in the "An update is available" page of the update wizard.
+-pref("app.update.url.details", "https://nightly.mozilla.org");
++pref("app.update.url.details", "about:blank");
+ 
+ // The number of days a binary is permitted to be old
+ // without checking for an update.  This assumes that
+diff --git a/browser/moz.configure b/browser/moz.configure
+index 446e8637d0..ed6110e929 100644
+--- a/browser/moz.configure
++++ b/browser/moz.configure
+@@ -11,7 +11,26 @@ imply_option("MOZ_NORMANDY", True)
+ imply_option("MOZ_PROFILE_MIGRATOR", True)
+ 
+ 
+-imply_option("MOZ_APP_VENDOR", "Mozilla")
++# Bootowser identity. These three are project_flags, which configure only
++# accepts from an imply_option -- a mozconfig `export` is rejected outright
++# ("can not be set by mozconfig. Values are accepted from: implied"), so the
++# rebrand has to live here rather than in mozconfig-bootowser.
++#
++# MOZ_APP_UA_NAME is deliberately Firefox and must stay that way unless you also
++# accept that pages gate on it: it defaults to empty, which makes the User
++# Agent fall back to application.ini's "Name", so leaving it out would serve
++# every page "bootowser/<version>" and get the kiosk treated as a bot.
++imply_option("MOZ_APP_VENDOR", "Bootowser")
++# application.ini's "Profile" field: the profile name inside the profile root.
++# The root itself is not this -- MOZ_DEDICATED_PROFILES is on in browser/, so a
++# build with MOZ_APP_NAME=bootowser profiles under ~/.bootowser/ rather than
++# sharing ~/.mozilla/ with whatever else is installed.
++imply_option("MOZ_APP_PROFILE", "bootowser")
++imply_option("MOZ_APP_UA_NAME", "Firefox")
++# Left as Firefox's GUID on purpose: it keys the crash reporter submission URL
++# and the update channel, which still point at Mozilla infrastructure. Give
++# Bootowser its own GUID only once you also run your own crash collection and a
++# signed update channel.
+ imply_option("MOZ_APP_ID", "{ec8030f7-c20a-464f-9b0e-13a3a9e97384}")
+ # Include the DevTools client, not just the server (which is the default)
+ imply_option("MOZ_DEVTOOLS", "all")

@@ -1,0 +1,135 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bootowser <b@o.local>
+Date: Sat, 3 Oct 2026 17:00:25 +0530
+Subject: [PATCH] [Bootowser] remove the UI escape hatches kiosk mode leaves
+ behind
+
+--kiosk hides the toolbox and suppresses the context menu, but three
+Chrome commands stay live, and all three are reachable by keyboard:
+
+  * Ctrl+O  BrowserCommands.openFileWindow() -- the file picker, i.e. an
+    arbitrary local-file read primitive.
+  * Ctrl+L  openLocation() -- focuses the URL bar. The nsDocShell
+    allowlist stops non-web schemes, but this still lets whoever can
+    type point the kiosk at any site on the internet.
+  * F12     gDevToolsBrowser.toggleToolboxCommand() -- a remote console
+    in the page's own chrome context. Once it is open, no policy setting
+    puts it away.
+
+Enterprise policy hides most of this UI, but policy binds neither
+keyboard shortcuts nor these commands, and it is a file on disk that
+anyone with the machine can edit. So the commands themselves refuse.
+
+The gate is bootowser.build, a new static pref set from the
+MOZ_BOOTOWSER define. Being static, it cannot be changed by a policy
+file, by about:config, or by anything the kiosk loads later -- which is
+the point: "remove the escape hatch" must not be undoable from inside
+the browser the lockdown is protecting. C++ prefers the MOZ_BOOTOWSER
+define directly, since it is available anyway; only the chrome JS needs
+the pref.
+
+Upstream builds are unaffected: bootowser.build is false, so every one
+of these is a no-op.
+---
+ browser/base/content/browser-commands.js      |  8 ++++++++
+ browser/base/content/browser.js               |  8 ++++++++
+ devtools/client/framework/devtools-browser.js |  9 +++++++++
+ modules/libpref/init/StaticPrefList.yaml      | 20 +++++++++++++++++++
+ 4 files changed, 45 insertions(+)
+
+diff --git a/browser/base/content/browser-commands.js b/browser/base/content/browser-commands.js
+index a56415fcca..3ed2ddc839 100644
+--- a/browser/base/content/browser-commands.js
++++ b/browser/base/content/browser-commands.js
+@@ -286,6 +286,14 @@ var BrowserCommands = {
+   },
+ 
+   openFileWindow() {
++    // [Bootowser] The file picker is an arbitrary-local-file read primitive,
++    // reachable from Ctrl+O. Policy cannot bind a keyboard shortcut, so the
++    // command itself refuses in the kiosk build. The pref is a static build
++    // pref, so it cannot be flipped at runtime or by a policy file.
++    if (Services.prefs.getBoolPref("bootowser.build", false)) {
++      return;
++    }
++
+     // The file picker is presented as a sheet attached to its parent
+     // browsingContext's window. When this command is dispatched from a
+     // non-browser chrome window (the macOS hidden menubar window when
+diff --git a/browser/base/content/browser.js b/browser/base/content/browser.js
+index 1e5946e697..a091d3ffa9 100644
+--- a/browser/base/content/browser.js
++++ b/browser/base/content/browser.js
+@@ -1364,6 +1364,14 @@ function loadOneOrMoreURIs(
+ }
+ 
+ function openLocation(event) {
++  // [Bootowser] Ctrl+L focuses the URL bar, which is a free-form navigation
++  // primitive: even though the allowlist in nsDocShell blocks non-web
++  // schemes, an operator who can type into the URL bar can point the kiosk at
++  // any site. The kiosk has no address bar to type into, so refuse here.
++  if (Services.prefs.getBoolPref("bootowser.build", false)) {
++    return;
++  }
++
+   if (window.location.href == AppConstants.BROWSER_CHROME_URL) {
+     let focusTarget = UrlbarUtils.getURLBarForFocus(window);
+     focusTarget.select();
+diff --git a/devtools/client/framework/devtools-browser.js b/devtools/client/framework/devtools-browser.js
+index c64750c2a1..43225f6551 100644
+--- a/devtools/client/framework/devtools-browser.js
++++ b/devtools/client/framework/devtools-browser.js
+@@ -85,6 +85,15 @@ var gDevToolsBrowser = (exports.gDevToolsBrowser = {
+    */
+   // used by browser-sets.inc.xhtml, command
+   toggleToolboxCommand(gBrowser, startTime) {
++    // [Bootowser] The devtools console is a remote shell on the page: with it
++    // an operator (or anything that can synthesise a keypress) can run
++    // arbitrary script in the kiosk's own chrome context, which no policy
++    // setting can undo once the toolbox is open. Enterprise policy's
++    // DisableDeveloperTools hides the UI, but this is the command itself.
++    if (Services.prefs.getBoolPref("bootowser.build", false)) {
++      return;
++    }
++
+     const toolbox = gDevTools.getToolboxForTab(gBrowser.selectedTab);
+ 
+     // If a toolbox exists, using toggle from the Main window :
+diff --git a/modules/libpref/init/StaticPrefList.yaml b/modules/libpref/init/StaticPrefList.yaml
+index 72a14fae87..e42fc37406 100644
+--- a/modules/libpref/init/StaticPrefList.yaml
++++ b/modules/libpref/init/StaticPrefList.yaml
+@@ -223,6 +223,14 @@
+ #define IS_NOT_MOBILE true
+ #endif
+ 
++#ifdef MOZ_BOOTOWSER
++#define IS_BOOTOWSER true
++#define IS_NOT_BOOTOWSER false
++#else
++#define IS_BOOTOWSER false
++#define IS_NOT_BOOTOWSER true
++#endif
++
+ #---------------------------------------------------------------------------
+ # Prefs starting with "accessibility."
+ #---------------------------------------------------------------------------
+@@ -1048,6 +1056,18 @@
+   value: false
+   mirror: always
+ 
++# [Bootowser] True only in a build configured with --enable-bootowser.
++#
++# This is a static pref, so it is compiled in and cannot be changed by a
++# policy file, by about:config, or by anything the kiosk loads. Code that
++# removes an escape hatch keys off this rather than off a runtime switch, so
++# "remove the escape hatch" is not something an operator can undo from the
++# running browser.
++- name: bootowser.build
++  type: bool
++  value: @IS_BOOTOWSER@
++  mirror: always
++
+ #---------------------------------------------------------------------------
+ # Prefs starting with "browser."
+ #---------------------------------------------------------------------------

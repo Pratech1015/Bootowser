@@ -1,0 +1,408 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bootowser <b@o.local>
+Date: Sun, 4 Oct 2026 13:13:09 +0530
+Subject: [PATCH] [Bootowser] remove unused browser chrome
+
+The kiosk shows a page. Everything else on the toolbox is chrome that
+nobody in front of it can use, and that an operator cannot afford to have
+one keystroke or one stray click away from the allowlist in nsDocShell:
+
+  * the app menu (hamburger) and the Windows PanelUI button -- the one
+    door to the whole browser UI, including the parts policy hides;
+  * the menu bar, which F10 would otherwise un-hide;
+  * the bookmarks toolbar, the star button, and the five accelerators
+    that create, list or show bookmarks;
+  * the sidebar and its launcher button -- which is where vertical tabs,
+    the bookmarks library, the history list and the AI chat live;
+  * the downloads panel button, the account/sync button, the zoom
+    button, the toolbar overflow, the all-tabs list, and the crash
+    reporter button.
+
+Three layers, because they fail differently:
+
+1. Elements are hidden, not deleted. The chrome JS looks these up by id
+   and dereferences the result in several places, so removing the nodes
+   turns a cosmetic change into a startup exception. display:none takes
+   them out of the layout and the a11y tree, which is what "removed"
+   means to anyone using the browser.
+
+2. The accelerators are compiled out. Policy binds defaults, not keys:
+   Ctrl+N, Ctrl+W, Ctrl+Q, Ctrl+H, Ctrl+B, Ctrl+Shift+B, Ctrl+D,
+   Ctrl+S, Ctrl+P, Ctrl+Shift+A, Ctrl+Shift+Y, Ctrl+Shift+P,
+   Ctrl+Shift+Delete, Ctrl+Shift+T/N, Ctrl+Shift+S, Ctrl+K, the AI and
+   open-tabs sidebar keys and the history keys all still fired with the
+   app menu gone. They are wrapped in #ifndef MOZ_BOOTOWSER, so an
+   upstream build gets every one of them back.
+
+3. F10 is handled in C++, in dom/xul/MenuBarListener.cpp, where the
+   DisplayMenuBar policy cannot reach it. Gated the same way.
+
+Three null-safety fixes fall out of removing key elements. Callers look
+those keys up by id, and several dereference the result unconditionally:
+
+  * browser-init.js removes key_privatebrowsing and key_quitApplication
+    whenever private browsing is off or the quit shortcut is disabled --
+    which is every kiosk start.
+  * ShortcutUtils.prettifyShortcut() is handed those ids from the star
+    button tooltip, the quit dialog and the bookmarks menu, and reads
+    getAttribute() off the result.
+  * eventMatchesKey() gets key_close from the send-to-device panel.
+
+All three now treat a missing key as "no shortcut", which is what a
+removed key means. Behaviour is unchanged for upstream builds, where the
+elements are still there.
+
+The new tab is a separate concern and needs no patch: NewTabPage=false
+makes it about:blank, and browser.theme.content-theme=0 (policy, locked)
+paints that blank document with the dark content theme.
+
+Upstream builds are unaffected: every change is behind MOZ_BOOTOWSER or
+behind a null check that upstream's own elements satisfy.
+---
+ browser/base/content/browser-init.js          |  8 ++-
+ browser/base/content/browser-sets.inc.xhtml   | 56 +++++++++++++++++++
+ .../base/content/navigator-toolbox.inc.xhtml  |  6 +-
+ browser/base/content/utilityOverlay.js        |  7 +++
+ browser/themes/shared/browser-shared.css      | 38 +++++++++++++
+ dom/xul/MenuBarListener.cpp                   |  9 +++
+ toolkit/modules/ShortcutUtils.sys.mjs         |  8 +++
+ 7 files changed, 129 insertions(+), 3 deletions(-)
+
+diff --git a/browser/base/content/browser-init.js b/browser/base/content/browser-init.js
+index 2f3f46d8d8..0be9d8db04 100644
+--- a/browser/base/content/browser-init.js
++++ b/browser/base/content/browser-init.js
+@@ -416,11 +416,15 @@ var gBrowserInit = {
+       document.getElementById("menu_newPrivateWindow").hidden = true;
+       // Setting disabled doesn't disable the shortcut, so we just remove
+       // the keybinding.
+-      document.getElementById("key_privatebrowsing").remove();
++      // [Bootowser] Optional chaining: this build compiles key_privatebrowsing
++      // out of browser-sets.inc.xhtml entirely, and this runs whenever private
++      // browsing is off, which is every kiosk start.
++      document.getElementById("key_privatebrowsing")?.remove();
+     }
+ 
+     if (BrowserUIUtils.quitShortcutDisabled) {
+-      document.getElementById("key_quitApplication").remove();
++      // [Bootowser] As above: key_quitApplication does not exist in this build.
++      document.getElementById("key_quitApplication")?.remove();
+       document.getElementById("menu_FileQuitItem").removeAttribute("key");
+ 
+       PanelMultiView.getViewNode(
+diff --git a/browser/base/content/browser-sets.inc.xhtml b/browser/base/content/browser-sets.inc.xhtml
+index 223691fb0c..0550b151b8 100644
+--- a/browser/base/content/browser-sets.inc.xhtml
++++ b/browser/base/content/browser-sets.inc.xhtml
+@@ -136,10 +136,12 @@
+   </commandset>
+ 
+   <keyset id="mainKeyset">
++#ifndef MOZ_BOOTOWSER
+     <key id="key_newNavigator"
+          data-l10n-id="window-new-shortcut"
+          command="cmd_newNavigator"
+          modifiers="accel" reserved="true"/>
++#endif
+     <key id="key_newNavigatorTab" data-l10n-id="tab-new-shortcut" modifiers="accel"
+          command="cmd_newNavigatorTabNoEvent" reserved="true"/>
+     <key id="focusURLBar" data-l10n-id="location-open-shortcut" command="Browser:OpenLocation"
+@@ -166,7 +168,10 @@
+ # is a fundamental keybinding and we are maintaining a XP binding so that it is easy
+ # for people to switch to Linux.
+ #
++#ifndef MOZ_BOOTOWSER
+     <key id="key_search" data-l10n-id="search-focus-shortcut" command="Tools:Search" modifiers="accel"/>
++#endif
++#ifndef MOZ_BOOTOWSER
+     <key id="key_search2"
+ #ifdef XP_MACOSX
+          data-l10n-id="find-shortcut"
+@@ -176,6 +181,8 @@
+          modifiers="accel"
+ #endif
+          command="Tools:Search"/>
++#endif
++#ifndef MOZ_BOOTOWSER
+     <key id="key_openDownloads"
+          data-l10n-id="downloads-shortcut"
+ #ifdef XP_GNOME
+@@ -184,12 +191,25 @@
+          modifiers="accel"
+ #endif
+          command="Tools:Downloads"/>
++#endif
++#ifndef MOZ_BOOTOWSER
+     <key id="key_openAddons" data-l10n-id="addons-shortcut" command="Tools:Addons" modifiers="accel,shift"/>
++#endif
++#ifndef MOZ_BOOTOWSER
+     <key id="openFileKb" data-l10n-id="file-open-shortcut" command="Browser:OpenFile"  modifiers="accel"/>
++#endif
++#ifndef MOZ_BOOTOWSER
+     <key id="key_savePage" data-l10n-id="save-page-shortcut" command="Browser:SavePage" modifiers="accel"/>
++#endif
++#ifndef MOZ_BOOTOWSER
+     <key id="printKb" data-l10n-id="print-shortcut" command="cmd_print"  modifiers="accel"/>
++#endif
++#ifndef MOZ_BOOTOWSER
+     <key id="key_close" data-l10n-id="close-shortcut" command="cmd_close" modifiers="accel" reserved="true"/>
++#endif
++#ifndef MOZ_BOOTOWSER
+     <key id="key_closeWindow" data-l10n-id="close-shortcut" command="cmd_closeWindow" modifiers="accel,shift" reserved="true"/>
++#endif
+     <key id="key_toggleMute" data-l10n-id="mute-toggle-shortcut" command="cmd_toggleMute" modifiers="control"/>
+     <key id="key_undo"
+          data-l10n-id="text-action-undo-shortcut"
+@@ -235,12 +255,16 @@
+     <key id="goHome" keycode="VK_HOME" modifiers="alt"/>
+     <key id="key_reload2" keycode="VK_F5" command="Browser:Reload"/>
+ #ifndef XP_MACOSX
++#ifndef MOZ_BOOTOWSER
+     <key id="showAllHistoryKb" data-l10n-id="history-show-all-shortcut" command="Browser:ShowAllHistory" modifiers="accel,shift"/>
++#endif
+     <key id="key_reload_skip_cache2" keycode="VK_F5" command="Browser:ReloadSkipCache" modifiers="accel"/>
+     <key id="key_enterFullScreen" keycode="VK_F11" command="View:FullScreen"/>
+     <key id="key_exitFullScreen" keycode="VK_F11" command="View:FullScreen" reserved="true" disabled="true"/>
+ #else
++#ifndef MOZ_BOOTOWSER
+     <key id="showAllHistoryKb" data-l10n-id="history-show-all-shortcut-mac" command="Browser:ShowAllHistory" modifiers="accel"/>
++#endif
+     <key id="key_enterFullScreen" data-l10n-id="full-screen-shortcut" command="View:FullScreen" modifiers="accel,control"/>
+     <key id="key_enterFullScreen_old" data-l10n-id="full-screen-shortcut" command="View:FullScreen" modifiers="accel,shift"/>
+     <key id="key_enterFullScreen_compat" keycode="VK_F11" command="View:FullScreen"/>
+@@ -283,17 +307,27 @@
+     <key id="key_findAgain2" data-l10n-id="search-find-again-shortcut-alt" command="cmd_findAgain"/>
+     <key id="key_findPrevious2" data-l10n-id="search-find-again-shortcut-alt" command="cmd_findPrevious" modifiers="shift"/>
+ 
++#ifndef MOZ_BOOTOWSER
+     <key id="addBookmarkAsKb" data-l10n-id="bookmark-this-page-shortcut" command="Browser:AddBookmarkAs" modifiers="accel"/>
++#endif
++#ifndef MOZ_BOOTOWSER
+     <key id="bookmarkAllTabsKb"
+          data-l10n-id="bookmark-this-page-shortcut"
+          modifiers="accel,shift"/>
++#endif
++#ifndef MOZ_BOOTOWSER
+     <key id="manBookmarkKb" data-l10n-id="bookmark-show-library-shortcut" command="Browser:ShowAllBookmarks" modifiers="accel,shift"/>
++#endif
++#ifndef MOZ_BOOTOWSER
+     <key id="viewBookmarksSidebarKb"
+          data-l10n-id="bookmark-show-sidebar-shortcut"
+          modifiers="accel"/>
++#endif
++#ifndef MOZ_BOOTOWSER
+     <key id="viewBookmarksToolbarKb"
+          data-l10n-id="bookmark-show-toolbar-shortcut"
+          modifiers="accel,shift"/>
++#endif
+ 
+     <key id="key_stop" keycode="VK_ESCAPE" command="Browser:Stop"/>
+ 
+@@ -301,6 +335,7 @@
+     <key id="key_stop_mac" modifiers="accel" data-l10n-id="nav-stop-shortcut" command="Browser:Stop"/>
+ #endif
+ 
++#ifndef MOZ_BOOTOWSER
+     <key id="viewGenaiChatSidebarKb"
+          data-l10n-id="ai-chatbot-sidebar-shortcut"
+ #ifdef XP_MACOSX
+@@ -309,6 +344,8 @@
+          modifiers="accel,alt"
+ #endif
+          />
++#endif
++#ifndef MOZ_BOOTOWSER
+     <key id="viewOpenTabsSidebarKb"
+          data-l10n-id="open-tabs-sidebar-shortcut2"
+ #ifdef XP_MACOSX
+@@ -317,6 +354,8 @@
+          modifiers="accel,alt"
+ #endif
+          />
++#endif
++#ifndef MOZ_BOOTOWSER
+     <key id="toggleSidebarKb"
+          data-l10n-id="toggle-sidebar-shortcut"
+ #ifdef XP_MACOSX
+@@ -325,6 +364,8 @@
+          modifiers="control,alt"
+ #endif
+         />
++#endif
++#ifndef MOZ_BOOTOWSER
+     <key id="key_gotoHistory"
+          data-l10n-id="history-sidebar-shortcut"
+ #ifdef XP_MACOSX
+@@ -333,6 +374,7 @@
+          modifiers="accel"
+ #endif
+         />
++#endif
+ 
+     <key id="key_fullZoomReduce" data-l10n-id="full-zoom-reduce-shortcut" command="cmd_fullZoomReduce"  modifiers="accel"/>
+     <key                         data-l10n-id="full-zoom-reduce-shortcut-alt-a" command="cmd_fullZoomReduce"  modifiers="accel"/>
+@@ -347,13 +389,22 @@
+ 
+     <key id="key_switchTextDirection" data-l10n-id="bidi-switch-direction-shortcut" command="cmd_switchTextDirection" modifiers="accel,shift" />
+ 
++#ifndef MOZ_BOOTOWSER
+     <key id="key_privatebrowsing" command="Tools:PrivateBrowsing" data-l10n-id="private-browsing-shortcut"
+          modifiers="accel,shift" reserved="true"/>
++#endif
++#ifndef MOZ_BOOTOWSER
+     <key id="key_screenshot" data-l10n-id="screenshot-shortcut" command="Browser:Screenshot" modifiers="accel,shift"/>
++#endif
++#ifndef MOZ_BOOTOWSER
+     <key id="key_sanitize" command="Tools:Sanitize" keycode="VK_DELETE" modifiers="accel,shift"/>
++#endif
+ #ifdef XP_MACOSX
++#ifndef MOZ_BOOTOWSER
+     <key id="key_sanitize_mac" command="Tools:Sanitize" keycode="VK_BACK" modifiers="accel,shift"/>
+ #endif
++#endif
++#ifndef MOZ_BOOTOWSER
+     <key id="key_quitApplication" data-l10n-id="quit-app-shortcut"
+ #ifdef XP_WIN
+          modifiers="accel,shift"
+@@ -369,9 +420,14 @@
+          command="cmd_quitApplication"
+ #endif
+          reserved="true"/>
++#endif
+ 
++#ifndef MOZ_BOOTOWSER
+     <key id="key_restoreLastClosedTabOrWindowOrSession" command="History:RestoreLastClosedTabOrWindowOrSession" data-l10n-id="tab-new-shortcut" modifiers="accel,shift"/>
++#endif
++#ifndef MOZ_BOOTOWSER
+     <key id="key_undoCloseWindow" command="History:UndoCloseWindow" data-l10n-id="window-new-shortcut" modifiers="accel,shift"/>
++#endif
+ 
+     <key id="key_addTabSplitView" command="Browser:AddTabSplitView"/>
+     <key id="key_separateTabSplitView" command="Browser:SeparateTabSplitView"/>
+diff --git a/browser/base/content/navigator-toolbox.inc.xhtml b/browser/base/content/navigator-toolbox.inc.xhtml
+index a76bb7aae7..90a44c5dce 100644
+--- a/browser/base/content/navigator-toolbox.inc.xhtml
++++ b/browser/base/content/navigator-toolbox.inc.xhtml
+@@ -2,7 +2,11 @@
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+ # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ 
+-<toolbox id="navigator-toolbox" class="chrome-block">
++<toolbox id="navigator-toolbox" class="chrome-block"
++#ifdef MOZ_BOOTOWSER
++         bootowser="true"
++#endif
++         >
+   <script src="chrome://browser/content/navigator-toolbox.js" />
+ 
+   <!-- Menu -->
+diff --git a/browser/base/content/utilityOverlay.js b/browser/base/content/utilityOverlay.js
+index d167fd2155..0dab7a546c 100644
+--- a/browser/base/content/utilityOverlay.js
++++ b/browser/base/content/utilityOverlay.js
+@@ -322,6 +322,13 @@ function closeMenus(node) {
+  *        to check if the close command key was pressed in aEvent.
+  */
+ function eventMatchesKey(aEvent, aKey) {
++  // [Bootowser] Callers look the key element up by id, and the Bootowser build
++  // compiles some of those keys out of browser-sets.inc.xhtml, so a null here
++  // is a normal result rather than a bug. There is no key to match against.
++  if (!aKey) {
++    return false;
++  }
++
+   let keyPressed = (aKey.getAttribute("key") || "").toLowerCase();
+   let keyModifiers = aKey.getAttribute("modifiers");
+   let modifiers = ["Alt", "Control", "Meta", "Shift"];
+diff --git a/browser/themes/shared/browser-shared.css b/browser/themes/shared/browser-shared.css
+index 18d3d0ac79..c9ee9ca895 100644
+--- a/browser/themes/shared/browser-shared.css
++++ b/browser/themes/shared/browser-shared.css
+@@ -1862,3 +1862,41 @@ popupnotificationcontent {
+ #bookmarksToolbarFolderMenu {
+   --menuitem-icon: url("chrome://browser/skin/places/bookmarksToolbar.svg");
+ }
++
++/* [Bootowser] Kiosk chrome.
++ *
++ * The kiosk has one job: show a page. Everything on the toolbox that is not
++ * that page -- the app menu, the menu bar, the bookmarks toolbar, the sidebar
++ * (which is where vertical tabs live), downloads, account sync, zoom -- is
++ * chrome nobody in front of the kiosk can use and that the operator cannot
++ * afford to have one keystroke away.
++ *
++ * These are hidden rather than deleted. The chrome JS looks most of these up by
++ * id and dereferences the result unconditionally, so removing the nodes turns
++ * a cosmetic change into a startup exception; display:none removes them from
++ * the layout and from the a11y tree, which is what "removed" means to anyone
++ * using the browser. The commands themselves are dealt with separately -- in
++ * browser-sets.inc.xhtml for the accelerators, and by policy for the rest.
++ *
++ * Gated on the bootowser attribute that navigator-toolbox.inc.xhtml only emits
++ * for MOZ_BOOTOWSER builds, so upstream builds are unaffected. */
++
++[bootowser] #toolbar-menubar,
++[bootowser] #unified-extensions-button,
++[bootowser] #PanelUI-button,
++[bootowser] #PersonalToolbar,
++[bootowser] #bookmarks-menu-button,
++[bootowser] #star-button-box,
++[bootowser] #sidebar-button,
++[bootowser] #sidebar-launcher-splitter,
++[bootowser] #sidebar-box,
++[bootowser] #sidebar-splitter,
++[bootowser] #vertical-tabs-newtab-button,
++[bootowser] #alltabs-button,
++[bootowser] #downloads-button,
++[bootowser] #fxa-toolbar-menu-button,
++[bootowser] #urlbar-zoom-button,
++[bootowser] #nav-bar-overflow-button,
++[bootowser] #panic-button {
++  display: none !important;
++}
+diff --git a/dom/xul/MenuBarListener.cpp b/dom/xul/MenuBarListener.cpp
+index 099f5411a7..b9be719e4a 100644
+--- a/dom/xul/MenuBarListener.cpp
++++ b/dom/xul/MenuBarListener.cpp
+@@ -204,6 +204,14 @@ nsresult MenuBarListener::KeyPress(Event* aKeyEvent) {
+   }
+ 
+ #ifndef XP_MACOSX
++// [Bootowser] F10 activates the menu bar. The kiosk hides the menu bar
++// (DisplayMenuBar policy plus the [bootowser] CSS), but "hidden" is a
++// paint-order property: the key still routed through this listener would
++// un-hide it and open the first menu. Enterprise policy binds a default,
++// not a listener, so the listener itself is gated. With the handler gone
++// F10 falls through to the accesskey path below, which has no menu bar to
++// activate.
++#ifndef MOZ_BOOTOWSER
+   // Need to handle F10 specially on Non-Mac platform.
+   if (nativeKeyEvent->mMessage == eKeyPress && keyCode == NS_VK_F10) {
+     if ((keyEvent->GetModifiersForMenuAccessKey() & ~MODIFIER_CONTROL) == 0) {
+@@ -236,6 +244,7 @@ nsresult MenuBarListener::KeyPress(Event* aKeyEvent) {
+ 
+     return NS_OK;
+   }
++#endif  // MOZ_BOOTOWSER
+ #endif  // !XP_MACOSX
+ 
+   RefPtr menuForKey = GetMenuForKeyEvent(*keyEvent);
+diff --git a/toolkit/modules/ShortcutUtils.sys.mjs b/toolkit/modules/ShortcutUtils.sys.mjs
+index 54caa393bf..43899befcd 100644
+--- a/toolkit/modules/ShortcutUtils.sys.mjs
++++ b/toolkit/modules/ShortcutUtils.sys.mjs
+@@ -58,6 +58,14 @@ export var ShortcutUtils = {
+    *   prettifyShortcut(example3) => ""
+    */
+   prettifyShortcut(aElemKey) {
++    // [Bootowser] The Bootowser build compiles a set of accelerators out of
++    // browser-sets.inc.xhtml, so callers that look one up by id -- the star
++    // button tooltip, the quit button, the bookmarks menu -- can legitimately
++    // hand us null. No key element means there is no shortcut to print.
++    if (!aElemKey) {
++      return "";
++    }
++
+     let elemString = this.getModifierString(aElemKey.getAttribute("modifiers"));
+     let key = this.getKeyString(
+       aElemKey.getAttribute("keycode"),

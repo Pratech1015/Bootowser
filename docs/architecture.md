@@ -19,15 +19,15 @@ configuration that keeps them honest.
                  |
                  v
         +-------------------+   bootowser.service, as user "bootowser"
-        |   chromium        |   --bootowser --kiosk=<url>
-        |   (patched +      |   no tabs, no omnibox, no settings
-        |    stripped)      |
+        |     bootowser     |   --kiosk, plus managed policies
+        |    the patched    |   no tabs, no omnibox, no settings
+        | Firefox 156 build |
         +-------------------+
 ```
 
 ## Why a display server is in here
 
-Chromium cannot paint on a bare text console. Something has to own the
+Firefox cannot paint on a bare text console. Something has to own the
 framebuffer and hand a window to the browser. Bootowser ships a deliberately
 minimal Xorg configuration for this, because the alternative — a full desktop
 environment — is exactly the bloat this project exists to remove.
@@ -40,48 +40,95 @@ development.
 and switch virtual terminals. The browser itself runs unprivileged as
 `bootowser`, confined by the unit's sandboxing directives.
 
-## The three layers of lockdown
+## The layers of lockdown
 
-Bootowser deliberately does not put all its eggs in one basket. Three
-independent layers have to fail before a user gets out of the kiosk.
+### 1. Kiosk mode — the command line
 
-### 1. Build time — `browser/gn/bootowser.args`
+`runtime/bin/bootowser` builds the command line from
+`/etc/bootowser/bootowser.conf` and execs the browser with `--kiosk`. Gecko's own
+kiosk mode is fullscreen with no exit path, no context menu, no URL bar and no
+loading status.
 
-Features that are dead weight for a single-purpose display are not compiled
-in: Safe Browsing, metrics, crash reporting, extensions, printing, spellcheck
-dictionaries, translation, mDNS, Chrome's updater. Most of the size reduction
-happens here, and it costs nothing at runtime.
+Two things about how this launcher works are deliberate:
 
-### 2. Policy time — `runtime/etc/bootowser/policies/managed/bootowser.json`
+- it **refuses to run** if the policy directory is missing, rather than
+  starting an unrestricted browser;
+- it **refuses** a `file://` `START_URL`, because a local file loaded as the
+  kiosk page is a local read primitive with no legitimate kiosk use;
+- it **refuses to fall back to a distro Firefox** unless `ALLOW_SYSTEM_BROWSER=1`
+  is set. A distro browser carries none of the patches in layer 3, so running one
+  silently drops the navigation allow-list and the removed escape hatches.
 
-43 managed Chromium policies: no sign-in, no sync, no password manager, no
-autofill, no developer tools, downloads blocked, `chrome://*` and
-`devtools://*` blocked by URL, popups/permissions denied by default.
+### 2. Policy time — `runtime/etc/bootowser/policies/managed/policies.json`
+
+47 managed Firefox policies and 86 locked preferences: no sign-in, no
+telemetry, no studies, no updates, no developer tools, no `about:config`, no
+password manager, no printing, no private browsing, no new-tab page, no search.
 
 Policy is preferred over patches wherever it can express the same intent,
 because it is auditable in one file and adjustable without a rebuild.
 
-### 3. Command line — `browser/patches/0002`
+Three details worth knowing:
 
-Some things are not expressible as policy. `ChromeMainDelegate::PreSandboxStartup()`
-sanitises the command line before any subsystem reads it:
+- `Preferences` entries are `"Status": "locked"`, which prevents a user
+  overriding them in `about:config`. Locked is the difference between a policy
+  being a floor and being a suggestion.
+- Firefox **silently ignores policy names it does not recognise**. A typo is an
+  invisible hole, so CI checks every name against a vendored copy of Mozilla's
+  policy list.
+- Firefox also silently ignores `Preferences` names outside its prefix
+  allow-list. Ten entries had to be dropped for this reason; see
+  [security.md](security.md).
 
-- **removed**: `--remote-debugging-port`, `--remote-debugging-pipe`,
-  `--remote-allow-origins`, `--remote-debugging-socket-name`,
-  `--remote-debugging-io-pipes`, `--disable-web-security`,
-  `--allow-file-access-from-files`, `--load-extension`,
-  `--disable-extensions-except`, `--renderer-cmdline`, `--js-flags`
-- **forced**: `--kiosk`, `--no-first-run`, `--hide-crash-restore-bubble`
-- **removed**: `--app`, `--app-id`, `--restore-last-session`
+#### Where the file has to end up
 
-This is the layer that matters most, because it is enforced in the binary and
-cannot be turned off from inside the kiosk.
+Firefox resolves managed policy from one of two paths, in this order, from
+`JSONPoliciesProvider` in `EnterprisePoliciesParent.sys.mjs`:
 
-### 4. Navigation time — `browser/patches/0003`
+1. `$SysConfD/policies/policies.json` — that is `/etc/policies/policies.json`,
+   **not** `/etc/firefox/policies/`, despite what most guides say;
+2. `$XREAppDist/policies.json` — `<install dir>/distribution/policies.json`.
 
-A `NavigationThrottle` that cancels any main-frame navigation which is not
-http, https or `about:blank`. Policy's `URLBlocklist` is a runtime control an
-operator can weaken; this is not.
+Only if path 1 does not exist is path 2 consulted, so a host policy silently
+wins. Bootowser therefore installs the policy *inside the browser tree* it ships,
+and the launcher re-checks the resolved path on every start: if the winning file
+is missing, or lacks the `"BootowserManaged": true` marker, it exits rather than
+run with the wrong policy.
+
+### 3. Build time — `firefox/mozconfig-bootowser`
+
+Bootowser is a Firefox 156 build with the dead weight left out: tests, DTDs,
+debug symbols, WebSpeech and the WASM sandboxed libraries are all off. This
+layer expresses what the other two cannot, which is why the launcher will not
+silently substitute a distro browser for it.
+
+The same file carries the product's identity: `--with-app-name=bootowser` plus
+`MOZ_APP_BASENAME`, `MOZ_APP_PROFILE` and `MOZ_APP_VENDOR` rename the executable
+and `application.ini`, which also moves the profile root to `~/.bootowser` — a
+dedicated-profiles layout, so it shares nothing with a real Firefox on the same
+machine — and the
+patch series rewrites the branding strings under `browser/branding/` to say
+Bootowser. The one deliberate exception is the User Agent, which stays
+`Firefox/156.0` so pages that gate on it keep working.
+
+Note that `--disable-debug` is deliberately *not* used. Those configs produce
+unoptimised builds, which is precisely wrong for a display that repaints
+forever.
+
+### What is missing
+
+**Navigation is not restricted.** This is the significant gap, and it is not a
+layer that exists by omission — Firefox has no policy that can express "this URL
+and only this URL", and Bootowser ships no Gecko patch to do it. A link, a
+redirect or a script can still change what the screen shows.
+
+The Chromium version of this project closed that with a `NavigationThrottle`
+patch. Firefox would need the same, in `docshell/`. Until it exists, see
+[docs/security.md](security.md#navigation-is-not-restricted) before deploying.
+
+There is also no launcher-side switch filter, because Firefox has no CDP
+endpoint for one to be aimed at. `EXTRA_SWITCHES` is therefore root-only
+territory.
 
 ## Taking the screen from the boot splash
 
@@ -106,19 +153,54 @@ what keeps one unit file working on Debian, Fedora and Arch.
 The visible result: your boot splash does what it always did, then the browser
 appears. No flicker, no desktop, no login screen in between.
 
-## Why the patch series is only three patches
+## Where the lockdown actually lives
 
-Chromium moves. A tree that is well organised today has files renamed next
-quarter: in the 154 series alone, `chrome_switches.cc` was deleted,
-`startup_utils.cc` moved to `ui/startup/`, and `chrome/browser/ui/web_ui/`
-disappeared entirely.
+Two layers, deliberately not the same kind of thing.
 
-Every patch in this repository touches **exactly one file**, is **generated
-with `git format-patch`** against a **pinned tag** recorded in
-`browser/CHROMIUM_VERSION`, and is checked by
-`tools/verify-patches.sh`, which fetches only the handful of upstream files
-the series touches and replays the patches against them in CI. Rolling
-Chromium forward is therefore a small, reviewable job rather than a rewrite.
+**The policy file is configuration.** It records what the kiosk is allowed to
+do, it is readable, and anyone with the machine can edit it. That is the right
+layer for things an operator should be able to change: the home page, whether
+the password manager is offered, which certificates are trusted.
+
+**The patch series is the floor.** `firefox/patches/` compiles the parts that
+must not be negotiable into the binary:
+
+| patch | enforces |
+| --- | --- |
+| `0001` | top-level navigations are limited to http/https/about:blank |
+| `0002` | Ctrl+O, Ctrl+L and F12 do nothing |
+| `0004` | the 28 unused key bindings and the F10 menu bar are gone from the binary, not just hidden |
+
+The reason this is not left to policy: `--kiosk` removes the chrome but nothing
+in it stops the *page* from navigating away. A link, a redirect, a form target
+or a script can replace what is on screen, and at that point the kiosk is
+showing whatever the page chose. Policy can block `about:*` through
+`URLBlocklist`, but that is a runtime control on a disk file, and it will not
+automatically cover schemes Firefox grows later.
+
+There is no third layer, on purpose. In particular there is no runtime switch,
+no pref, and no hidden URL that re-enables what the patches remove, because a
+kiosk that can be talked out of its lockdown from inside the browser it is
+protecting is not locked down. `bootowser.build`, which the chrome-side hatches
+key off, is a *static* pref: it is compiled in from the `MOZ_BOOTOWSER` define
+and cannot be changed by a policy file, by `about:config`, or by anything the
+page loads.
+
+## Why the series is kept small
+
+The Chromium version of this project carried a three-patch series against a
+9000-line file that Mozilla reorders constantly. The Firefox series is two
+commits, about 300 lines, against files Mozilla moves far less often.
+
+That is the whole reason for preferring Firefox here, and it is a real
+constraint to keep respecting: every patch is a merge conflict waiting to
+happen. When adding one, prefer a narrow anchor at a stable point in a file
+over a wide hunk in a hot one. `nsDocShell.cpp` is the expensive file, so the
+navigation check is one self-contained function inserted next to an existing
+guard rather than edits spread through `LoadURI`.
+
+Rolling forward is then a version bump in `firefox/FIREFOX_VERSION` and a
+`--check`. See [docs/building.md](building.md).
 
 ## Recovering a wedged device
 
@@ -138,3 +220,16 @@ systemctl enable getty@tty1.service
 ```
 
 `tools/uninstall.sh` does all of this for you.
+
+## Recovering a kiosk that shows the wrong thing
+
+The unit has `Restart=always` with `RestartSec=3`, so a browser that crashes
+comes straight back. If it comes back showing the wrong page, the problem is
+almost never the kiosk and almost always `START_URL` or a redirect on the
+server side:
+
+```sh
+journalctl -u bootowser -b --no-pager | grep bootowser:
+```
+
+The launcher logs the exact command line it exec'd before starting it.

@@ -1,0 +1,154 @@
+# Build configuration for the Bootowser Firefox kiosk build.
+#
+# Apply with:
+#   cp mozconfig-bootowser <firefox-src>/.mozconfig
+#   ./mach bootstrap
+#   ./mach build
+#
+# IMPORTANT -- how to edit this file
+#
+# Every option below has been checked against the *actual* option list of
+# Firefox 156 (extract it with `git grep -ho 'option(' -- '*.configure'`, or
+# more reliably, just run `./mach configure`: it aborts with
+# "Unknown option: --xyz" on the first one that does not exist).
+#
+# This matters because most of the "safe strip" flags floating around the web
+# are stale. Verified absent from Firefox 156's configure:
+#
+#   --disable-telemetry   --disable-features   --disable-dtd
+#   --disable-breakpad    --disable-hubs       --disable-system-addons
+#   --disable-experiments --disable-search     --disable-gnome-keyring
+#   --disable-gecko-profiling
+#   --disable-updater     --enable-webrender   --enable-o2
+#   --cache-dir
+#
+# Passing any of those does not warn and get ignored: configure *aborts the
+# entire build*. If you add a flag here, confirm it against the tree first.
+#
+# Most of what they used to disable is now the default. Firefox moved to
+# opt-in feature flags, so "not passing the flag" is what turns the feature
+# off. The exceptions are called out below.
+
+# --- The lockdown ----------------------------------------------------------
+# Do not remove this line and expect a kiosk. Without it this is stock Firefox
+# with a policy file, which is what --kiosk plus policy already gives you.
+#
+# This defines MOZ_BOOTOWSER, which:
+#   * turns on the top-level navigation allowlist in nsDocShell, and
+#   * turns on the removal of the Ctrl+O / Ctrl+L / F12 escape hatches.
+# See patches/series.
+ac_add_options --enable-bootowser
+
+# --- Identity: the browser is Bootowser, not Firefox --------------------------
+# --with-app-name is what actually renames the executable: it is MOZ_APP_NAME,
+# which lands in application.ini's "Name" field, in dist/bin/<name>, and in the
+# Unix remoting socket name. Lower case, because it is a program name.
+#
+# Three of the other identity variables cannot be set from here:
+# MOZ_APP_VENDOR, MOZ_APP_PROFILE and MOZ_APP_UA_NAME are project_flags, and
+# configure rejects a mozconfig that tries ("can not be set by mozconfig. Values
+# are accepted from: implied"). patches/0003 sets those with imply_option in
+# browser/moz.configure, and that patch also rewrites the branding strings under
+# browser/branding/ to say Bootowser.
+#
+# Note what MOZ_APP_UA_NAME=Firefox in that patch is for. Left unset it is empty,
+# and the User Agent then falls back to application.ini's "Name" -- so the
+# rebrand alone would serve every page "bootowser/156.0" and get the kiosk
+# treated as a bot by any site that gates on the UA. Keeping the UA Firefox is
+# the one place the rebrand stops, on purpose.
+ac_add_options --with-app-name=bootowser
+
+# application.ini "Name" when MOZ_APP_NAME is derived rather than set, plus the
+# Windows registry paths and symbolstore PRODUCTNAME. Unused on Linux once
+# --with-app-name is set, but leaving it as "Firefox" would leave half the
+# tree's own metadata calling itself Firefox.
+export MOZ_APP_BASENAME=Bootowser
+
+# --- Optimised, not a debug build ------------------------------------------
+# Never a --disable-debug style build: those are for bisecting, not shipping.
+# An unoptimised build repaints a kiosk display painfully slowly, which is
+# exactly wrong for the one thing this machine does all day.
+#
+# `--enable-optimize` selects -O2 on desktop targets by default. There is no
+# `--enable-o2` option any more; it aborts configure if passed.
+ac_add_options --enable-optimize
+
+# ccache. This is opt-in: configure does not look for ccache on its own, it
+# only checks for it when asked. Without this line a perfectly good ccache
+# install is silently unused and a rebuild after touching a header recompiles
+# the world.
+#
+# The cache *directory* is not configured here on purpose -- Firefox has no
+# --cache-dir option any more, so the location is ccache's business. Export
+# CCACHE_DIR to put the cache on a filesystem with room:
+#
+#   export CCACHE_DIR=/mnt/fast/ccache
+#
+# Do not leave it on the default (~/.cache/ccache) if your root filesystem is
+# small; a Firefox ccache runs to several GB.
+ac_add_options --with-ccache=ccache
+
+# --- Size and surface-area strips ------------------------------------------
+# These are verified to exist in Firefox 156.
+
+# Test suites are the single largest thing in the tree and are worthless in a
+# shipping kiosk image.
+ac_add_options --disable-tests
+
+# Debug symbols for our own binaries. Not the browser's own symbols -- this is
+# the -g flag on things we compile that would otherwise be useless in the field.
+ac_add_options --disable-debug-symbols
+
+# WebSpeech exposes the microphone to any page via JS. A kiosk has no user to
+# consent to it and no microphone worth opening, and leaving it in is a page-
+# reachable capture surface.
+ac_add_options --disable-webspeech
+ac_add_options --disable-synth-speechd
+
+# wasm sandboxed libraries: this needs a wasi sysroot, which no ordinary
+# Arch install provides, so configure dies with "Cannot find wasi headers" if
+# it is left on.
+#
+# Note this is the one genuine security-relevant trade-off in this file, so
+# weigh it deliberately: without it, the sandboxed C libraries (the codec /
+# image / media decoding helpers) are built as ordinary native code rather
+# than as wasm modules with their own reduced syscall surface. For a kiosk
+# that only ever loads pages you control, that is an acceptable trade for
+# being able to build at all.
+#
+# If you would rather have the isolation, install a wasi sysroot instead:
+#   export MOZ_STDCXX_COMPAT=  # and provide clang's wasm32-wasip1 sysroot
+ac_add_options --without-wasm-sandboxed-libraries
+
+# Note: there is no `--disable-update-agent` here, tempting as it looks. It
+# exists, but it is declared `when=target_is_windows | target_is_osx` -- the
+# update agent is Windows/macOS-only in Firefox 156 -- so on Linux it does not
+# merely do nothing, it makes configure abort with
+# "--disable-update-agent is not available in this configuration".
+
+# --- Cannot be turned off via configure, and why we care --------------------
+# Recorded here so nobody re-adds a dead flag trying to switch them off:
+#
+#   MOZ_CRASHREPORTER  default-on on Linux x86_64. The only option that
+#                      mentions it is --enable-crashreporter; there is no
+#                      --disable- form. Policy's DisableTelemetry/
+#                      DisableCrashReporter still governs it at runtime.
+#   MOZ_UPDATER        same shape: --enable-updater exists, no --disable-.
+#   MOZ_NORMANDY       implied on by browser/moz.configure with no CLI switch.
+#   MOZ_TELEMETRY_*    keyed off MOZ_TELEMETRY_REPORTING, which defaults to
+#                      `mozilla_official` -- false for an unofficial branding,
+#                      so it is already off here.
+#
+# None of these are patched out, because a source patch that deletes the crash
+# reporter buys little for a kiosk and costs a lot of merge conflict against a
+# moving tree. The runtime policy is the right control for them.
+
+# --- Environment -----------------------------------------------------------
+# Rust dependencies come from vendored crates; CARGO_NET_OFFLINE is therefore
+# false (online allowed) rather than true, which would fail the vendored
+# fetch outright.
+export CARGO_NET_OFFLINE=false
+
+# Keep build output outside the source tree so a --clean or a re-clone does
+# not fight with it.
+mk_add_options MOZ_OBJDIR="@TOPSRCDIR@/../obj-bootowser"

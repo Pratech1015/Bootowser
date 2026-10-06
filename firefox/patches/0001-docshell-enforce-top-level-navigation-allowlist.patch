@@ -1,0 +1,272 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bootowser <b@o.local>
+Date: Sat, 3 Oct 2026 17:00:14 +0530
+Subject: [PATCH] [Bootowser] docshell: enforce a top-level navigation
+ allowlist
+
+--kiosk removes the browser chrome, but nothing in it stops the *page*
+from navigating away: a link, a redirect, a form target or a script can
+replace what is on screen. Once the kiosk is showing attacker-chosen
+content, the policy file is all that is left holding the line -- and
+policy is a runtime control an operator can weaken.
+
+Enterprise policy can block about:* and chrome://* through URLBlocklist,
+but it will not automatically cover schemes Firefox grows later, and it
+is trivially removable from a file on disk.
+
+So enforce the allowlist in the source, at nsDocShell::LoadURI() and
+nsDocShell::InternalLoad() -- the two choke points every top-level
+navigation passes through, before a channel is created. Both are
+checked because history and bfcache navigation reach InternalLoad()
+without going through LoadURI().
+
+The "top-level" part matters: sub-frames reach the same code and are
+left alone, so pages may embed what they like but can never steer the
+kiosk itself out of the web.
+
+The allowlist is http/https, plus the handful of things the browser
+loads *into its own top-level window* and cannot work without:
+chrome:// (the window and browser UI documents -- without this the
+browser never paints itself), about:blank/newtab/home, and
+moz-extension:// for bundled extensions' background pages. None of
+those are reachable from page content on their own: nsSecurityManager
+already refuses a non-chrome caller a top-level chrome:// navigation,
+and moz-extension: needs host permission the content lacks.
+
+Getting this list wrong is not theoretical. The first cut allowed only
+http/https/about:blank, and launching the build logged
+"blocked top-level navigation to chrome://global/content/win.xhtml" --
+a browser that cannot draw its own window. about:newtab and the bundled
+extensions' background pages broke the same way.
+
+Blocked navigations fail with NS_ERROR_ABORT, which the callers already
+know how to report: the page sees an aborted navigation rather than a
+half-loaded privileged document.
+
+Also registers the "bootowser" static pref group in modules/libpref's
+moz.build. StaticPrefsAll.h includes a header per group, so a group
+declared in StaticPrefList.yaml but absent from that list fails the
+build with "mozilla/StaticPrefs_bootowser.h file not found" rather than
+being quietly skipped.
+
+Guarded by MOZ_BOOTOWSER, set by the new --enable-bootowser flag, so
+upstream builds are unaffected.
+---
+ docshell/base/nsDocShell.cpp | 122 +++++++++++++++++++++++++++++++++++
+ docshell/base/nsDocShell.h   |   5 ++
+ modules/libpref/moz.build    |  10 +++
+ toolkit/moz.configure        |  17 +++++
+ 4 files changed, 154 insertions(+)
+
+diff --git a/docshell/base/nsDocShell.cpp b/docshell/base/nsDocShell.cpp
+index 6fe906d343..8f45f0ca95 100644
+--- a/docshell/base/nsDocShell.cpp
++++ b/docshell/base/nsDocShell.cpp
+@@ -714,6 +714,121 @@ nsresult nsDocShell::CheckDisallowedJavascriptLoad(
+   return NS_ERROR_DOM_BAD_CROSS_ORIGIN_URI;
+ }
+ 
++// [Bootowser] Cancel top-level navigations that are not plain web content.
++//
++// Firefox's --kiosk removes the chrome, but nothing in it stops the *page*
++// from navigating: a link, a redirect, a form target or a script can replace
++// what is on screen, and once the kiosk is showing attacker-chosen content the
++// policy file is the only thing still holding the line. Enterprise policy can
++// block about:* and chrome://* through URLBlocklist, but that is a runtime
++// control an operator can weaken, and it will not automatically cover schemes
++// Firefox grows later.
++//
++// So enforce the allowlist here, at the single choke point every top-level
++// navigation passes through, before any channel is created. Kiosk mode is meant
++// to be a one-way door, and this is the door.
++//
++// Sub-frames are deliberately untouched: a page may embed whatever it likes,
++// but it can never navigate the kiosk itself out of the web.
++nsresult nsDocShell::CheckBootowserNavigation(nsDocShellLoadState* aLoadState) {
++  // Compiled in only by the Bootowser build (see firefox/patches in the
++  // Bootowser repository), so upstream builds are unaffected.
++#ifdef MOZ_BOOTOWSER
++  // Only the top-level document matters. A sub-frame load reaches here with a
++  // non-top BrowsingContext, and blocking it would break ordinary embedded
++  // content (ads, iframes, third-party scripts).
++  if (!mBrowsingContext || !mBrowsingContext->IsTop()) {
++    return NS_OK;
++  }
++
++  nsIURI* uri = aLoadState->URI();
++  if (!uri) {
++    return NS_ERROR_MALFORMED_URI;
++  }
++
++  // http/https is the whole point of a web kiosk.
++  if (uri->SchemeIs("http") || uri->SchemeIs("https")) {
++    return NS_OK;
++  }
++
++  // chrome:// is Firefox's own UI, and two of those documents *are* the window:
++  // the browser loads them at startup, and refusing them leaves a window that
++  // never paints its own UI. Those two are the whole exemption -- by exact
++  // host and path, not by scheme.
++  //
++  // A page cannot reach a chrome: URL at all: nsSecurityManager refuses a
++  // non-chrome caller a top-level chrome: navigation ("Not allowed to load
++  // privileged URL") long before a docshell is involved. The person at the
++  // machine can type one, though, and that puts a privileged document on
++  // screen. Refining the allowlist to the two window documents is what closes
++  // the rest of the scheme -- chrome://mozapps/, chrome://global/content/dialog*,
++  // and every other chrome page stop being navigable.
++  //
++  // The two exempt documents stay reachable in a tab, which is the residue of
++  // this trade: a typed chrome://browser/content/browser.xhtml still gives a
++  // second copy of the browser UI. It is not an escalation, because it is the
++  // same compiled-in lockdown and the same allow-list, but it is not nothing,
++  // and docs/security.md says so.
++  if (uri->SchemeIs("chrome")) {
++    // nsIURI has no path accessor, so compare the spec with any query and
++    // fragment cut off: the two window documents are addressed by path, and
++    // anything else on this scheme falls through to the refusal below.
++    nsAutoCString spec;
++    uri->GetSpec(spec);
++    int32_t cut = spec.FindChar('#');
++    if (cut >= 0) {
++      spec.Truncate(cut);
++    }
++    cut = spec.FindChar('?');
++    if (cut >= 0) {
++      spec.Truncate(cut);
++    }
++    if (spec == "chrome://global/content/win.xhtml" ||
++        spec == "chrome://browser/content/browser.xhtml") {
++      return NS_OK;
++    }
++  }
++
++  // about:newtab is the browser's own new-tab page, not a privileged document:
++  // it is HTML with no chrome privileges, and it is the page a startup race or a
++  // "open new tab" action lands on. Blocking it is only a self-inflicted blank
++  // window, so allow it.
++  if (uri->SchemeIs("about")) {
++    if (NS_IsAboutBlank(uri)) {
++      return NS_OK;
++    }
++    nsAutoCString spec;
++    uri->GetSpec(spec);
++    if (spec == "about:newtab" || spec == "about:home") {
++      return NS_OK;
++    }
++  }
++
++  // moz-extension:// is how bundled extensions (the PDF viewer, pocket, the
++  // default-theme and system-addon shims) load their background pages. Those are
++  // part of making the browser work; refusing them breaks PDF viewing and
++  // similar. A web page still cannot reach an extension's privileged page on its
++  // own -- moz-extension: URIs are not loadable from content without the
++  // extension being granted host permission first, which policy controls.
++  if (uri->SchemeIs("moz-extension")) {
++    return NS_OK;
++  }
++
++  // Everything else is refused: about:config, about:addons, devtools://,
++  // view-source:, resource://, file://, and any scheme added upstream later.
++  //
++  // NS_ERROR_ABORT is what the caller already knows how to report: the load
++  // simply fails, and the page sees an aborted navigation rather than a
++  // half-loaded privileged document.
++  MOZ_LOG(gNavigationAPILog, LogLevel::Warning,
++          ("[bootowser] blocked top-level navigation to %s",
++           uri->GetSpecOrDefault().get()));
++  return NS_ERROR_ABORT;
++#else
++  return NS_OK;
++#endif
++}
++
+ NS_IMETHODIMP
+ nsDocShell::LoadURI(nsDocShellLoadState* aLoadState, bool aSetNavigating) {
+   return LoadURI(aLoadState, aSetNavigating, false);
+@@ -740,6 +855,9 @@ nsresult nsDocShell::LoadURI(nsDocShellLoadState* aLoadState,
+ 
+   MOZ_TRY(CheckDisallowedJavascriptLoad(aLoadState));
+ 
++  // [Bootowser] Enforce the kiosk navigation allowlist.
++  MOZ_TRY(CheckBootowserNavigation(aLoadState));
++
+   bool oldIsNavigating = mIsNavigating;
+   auto cleanupIsNavigating =
+       MakeScopeExit([&]() { mIsNavigating = oldIsNavigating; });
+@@ -8544,6 +8662,10 @@ nsresult nsDocShell::InternalLoad(nsDocShellLoadState* aLoadState,
+ 
+   MOZ_TRY(CheckDisallowedJavascriptLoad(aLoadState));
+ 
++  // [Bootowser] InternalLoad is reachable without passing through LoadURI
++  // (history and bfcache navigation), so the allowlist is enforced here too.
++  MOZ_TRY(CheckBootowserNavigation(aLoadState));
++
+   // If we don't have a target, we're loading into ourselves, and our load
+   // delegate may want to intercept that load.
+   SameDocumentNavigationState sameDocumentNavigationState;
+diff --git a/docshell/base/nsDocShell.h b/docshell/base/nsDocShell.h
+index c3fcd2985a..1183846497 100644
+--- a/docshell/base/nsDocShell.h
++++ b/docshell/base/nsDocShell.h
+@@ -1063,6 +1063,11 @@ class nsDocShell final : public nsDocLoader,
+   // NS_ERROR_DOM_BAD_CROSS_ORIGIN_URI if it does not.
+   nsresult CheckDisallowedJavascriptLoad(nsDocShellLoadState* aLoadState);
+ 
++  // [Bootowser] If MOZ_BOOTOWSER is defined, cancels top-level navigations to
++  // anything other than http/https and about:blank, before any load starts.
++  // Sub-frame loads are always permitted.
++  nsresult CheckBootowserNavigation(nsDocShellLoadState* aLoadState);
++
+   nsresult LoadURI(nsDocShellLoadState* aLoadState, bool aSetNavigating,
+                    bool aContinueHandlingSubframeHistory);
+ 
+diff --git a/modules/libpref/moz.build b/modules/libpref/moz.build
+index 2c8b218c61..724b50d433 100644
+--- a/modules/libpref/moz.build
++++ b/modules/libpref/moz.build
+@@ -30,6 +30,16 @@ pref_groups = [
+     "apz",
+     "beacon",
+     "bidi",
++    # [Bootowser] The bootowser.build static pref is declared in
++    # StaticPrefList.yaml, so its generated header has to be built and
++    # installed here too. Without this, StaticPrefsAll.h includes
++    # mozilla/StaticPrefs_bootowser.h, which is never generated, and the
++    # build fails in modules/libpref with "file not found".
++    #
++    # Note this list is kept in sync with the "Prefs starting with ..." section
++    # headers in StaticPrefList.yaml; a group present in one and not the other
++    # fails the build rather than being ignored.
++    "bootowser",
+     "browser",
+     "channelclassifier",
+     "clipboard",
+diff --git a/toolkit/moz.configure b/toolkit/moz.configure
+index 2a0b994468..a40484d32b 100644
+--- a/toolkit/moz.configure
++++ b/toolkit/moz.configure
+@@ -2061,6 +2061,23 @@ option(
+ set_config("MOZ_REQUIRE_SIGNING", True, when="MOZ_REQUIRE_SIGNING")
+ set_define("MOZ_REQUIRE_SIGNING", True, when="MOZ_REQUIRE_SIGNING")
+ 
++# ==============================================================
++# Bootowser kiosk lockdown
++# ==============================================================
++# When enabled, code that only makes sense for a single-purpose unattended
++# kiosk is compiled in: the top-level navigation allowlist, and the removal of
++# the UI escape hatches that kiosk mode leaves behind. Off by default, so an
++# upstream build is byte-for-byte unaffected.
++option(
++    "--enable-bootowser",
++    env="MOZ_BOOTOWSER",
++    default=False,
++    help="Build a locked-down Bootowser kiosk browser",
++)
++
++set_config("MOZ_BOOTOWSER", True, when="MOZ_BOOTOWSER")
++set_define("MOZ_BOOTOWSER", True, when="MOZ_BOOTOWSER")
++
+ option(
+     "--with-unsigned-addon-scopes",
+     nargs="+",

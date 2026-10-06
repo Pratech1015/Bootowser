@@ -1,0 +1,9 @@
+# The exact Firefox release the Bootowser patch series is written against.
+#
+# The series is applied with `git am` inside firefox-src/ and is rejected if
+# the checkout is on any other tag, so a partial apply can never silently
+# produce a build that is missing a lockdown patch.
+#
+# Upstream git mirror: https://github.com/mozilla-firefox/firefox
+# (mozilla/gecko-dev is archived and has not carried release tags since B2G.)
+FIREFOX_156_0_1_RELEASE
