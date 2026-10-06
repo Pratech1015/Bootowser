@@ -126,22 +126,22 @@ ac_add_options --without-wasm-sandboxed-libraries
 # merely do nothing, it makes configure abort with
 # "--disable-update-agent is not available in this configuration".
 
-# --- Cannot be turned off via configure, and why we care --------------------
-# Recorded here so nobody re-adds a dead flag trying to switch them off:
+# --- Runtime-silent features, compiled out by patches/0005 ------------------
+# These have no working --disable- flag in Firefox 156, so patch 0005 flips
+# their defaults off directly. The flips are unconditional -- browser/
+# moz.configure cannot read MOZ_BOOTOWSER, which toolkit/moz.configure only
+# declares later -- and that is fine for a one-product fork: the patch lives
+# in this repository and is never part of an upstream build.
 #
-#   MOZ_CRASHREPORTER  default-on on Linux x86_64. The only option that
-#                      mentions it is --enable-crashreporter; there is no
-#                      --disable- form. Policy's DisableTelemetry/
-#                      DisableCrashReporter still governs it at runtime.
-#   MOZ_UPDATER        same shape: --enable-updater exists, no --disable-.
-#   MOZ_NORMANDY       implied on by browser/moz.configure with no CLI switch.
-#   MOZ_TELEMETRY_*    keyed off MOZ_TELEMETRY_REPORTING, which defaults to
-#                      `mozilla_official` -- false for an unofficial branding,
-#                      so it is already off here.
+#   --enable-crashreporter  default is off for bootowser builds: no crash GUI
+#                           to pop over the display, no minidump collection.
+#   --enable-updater        default is off for bootowser builds: no self-
+#                           update, no MAR, no update channel to sign.
+#   MOZ_NORMANDY            no longer implied, and its component directory is
+#                           not built: no recipe runner, no remote experiments.
 #
-# None of these are patched out, because a source patch that deletes the crash
-# reporter buys little for a kiosk and costs a lot of merge conflict against a
-# moving tree. The runtime policy is the right control for them.
+# MOZ_TELEMETRY_REPORTING keys off `mozilla_official`, which is false for this
+# unofficial branding, so telemetry was already off before patches/0005.
 
 # --- Environment -----------------------------------------------------------
 # Rust dependencies come from vendored crates; CARGO_NET_OFFLINE is therefore

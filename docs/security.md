@@ -128,8 +128,9 @@ away** — that removes the containment entirely.
 ## Safe Browsing and updates
 
 Both are off by default. `DisableAppUpdate` and `DisableTelemetry` are set, the
-`app.update.*` preferences are locked off, and the optional custom build
-disables the updater and crash reporter at compile time.
+`app.update.*` preferences are locked off, and patch `0005` compiles the
+updater, the crash reporter and Normandy (remote experiments) out of the
+browser entirely.
 
 Safe Browsing being off is deliberate and consistent: with no updater, the
 download-based blocklists would never refresh anyway. If you want it, re-enable

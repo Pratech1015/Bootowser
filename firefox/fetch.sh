@@ -97,8 +97,7 @@ if [ -n "${avail_kb}" ]; then
   log "space available for ${DEST}: ${avail_gb} GB (on ${probe})"
   # Mozilla documents 30 GB as the minimum for a full build.
   if [ "${avail_gb}" -lt 30 ]; then
-    die "only ${avail_gb} GB free at '${probe}'; Firefox needs at least 30 GB to build."
-    die "Point --dest (or FIREFOX_SRC_DIR) at a bigger filesystem."
+    die "only ${avail_gb} GB free at '${probe}'; Firefox needs at least 30 GB to build. Point --dest (or FIREFOX_SRC_DIR) at a bigger filesystem"
   fi
 else
   log "warning: could not determine free space for ${DEST}"
@@ -108,9 +107,27 @@ if [ -e "${DEST}" ]; then
   [ -d "${DEST}" ] || die "${DEST} exists and is not a directory"
   if [ -d "${DEST}/.git" ]; then
     log "updating the existing checkout at ${DEST}"
+
+    # A patched tree sits on a detached HEAD that points *past* the release tag
+    # (apply-patches.sh commits the series on top of it). Blindly checking the
+    # tag out again would strand those commits with no ref pointing at them, so
+    # the update path only re-checkouts when HEAD is exactly the pinned tag.
+    head_commit="$(git -C "${DEST}" rev-parse --verify HEAD 2>/dev/null || true)"
+    tag_commit="$(git -C "${DEST}" rev-parse --verify "${VERSION}^{commit}" 2>/dev/null || true)"
+    dirty="$(git -C "${DEST}" status --porcelain 2>/dev/null | sed -e '/^??/d' -e '/^$/d' | head -n1)"
+
     git -C "${DEST}" remote set-url origin "${MOZILLA_REPO}"
     git -C "${DEST}" fetch --depth "${DEPTH}" origin "refs/tags/${VERSION}:refs/tags/${VERSION}"
-    git -C "${DEST}" checkout --detach "${VERSION}"
+
+    if [ -n "${dirty}" ]; then
+      die "${DEST} has uncommitted changes; commit or stash them before re-running fetch.sh"
+    fi
+    if [ -n "${head_commit}" ] && [ "${head_commit}" = "${tag_commit}" ]; then
+      git -C "${DEST}" checkout --detach "${VERSION}"
+    else
+      log "HEAD is not the pinned tag (${head_commit:-unknown} != ${tag_commit:-no such tag}); leaving the checkout in place"
+      log "re-run ${SCRIPT_DIR}/apply-patches.sh on this tree if it was built from it"
+    fi
   else
     die "${DEST} exists but is not a git checkout; remove it or pass a different --dest"
   fi

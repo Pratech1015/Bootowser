@@ -1,0 +1,167 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bootowser <b@o.local>
+Date: Tue, 6 Oct 2026 18:01:25 +0530
+Subject: [PATCH] [Bootowser] strip the crash reporter, updater and remote
+ experiments
+
+A kiosk is one immutable image: it is replaced, not recovered or updated in
+place, and it only ever loads pages the operator already chose. So nothing
+that exists to talk back to Mozilla or to pop a GUI over the display earns
+its build cost. Bootowser is a one-product fork, so the switches flip the
+defaults unconditionally rather than keying off --enable-bootowser (which
+is declared too late in the configure include order to reference from the
+files these rules live in).
+
+  * crash reporter default off: a crash dialog popping over the kiosk
+    display is a denial of service, and nothing collects the minidumps.
+  * updater default off: no self-update, no MAR, no update channel to sign.
+  * Normandy (remote experiments) not implied and its component directory
+    not built, so no recipe runner and no content-signing client.
+  * browser identity: stop setting MOZ_APP_VENDOR to the same string as the
+    app name, which made "bootowser --version" print "Bootowser Bootowser
+    156.0.1" instead of "Bootowser 156.0.1".
+  * gate Normandy's quit-time module registration on MOZ_NORMANDY so a
+    build without it does not log a missing-module error on every exit.
+---
+ browser/components/BrowserComponents.manifest |  2 ++
+ browser/moz.configure                         | 16 +++++++++++-----
+ build/moz.configure/update-programs.configure |  5 ++++-
+ toolkit/components/moz.build                  |  6 +++++-
+ toolkit/moz.configure                         |  9 +++------
+ toolkit/xre/nsAppRunner.cpp                   |  8 ++++++--
+ 6 files changed, 31 insertions(+), 15 deletions(-)
+
+diff --git a/browser/components/BrowserComponents.manifest b/browser/components/BrowserComponents.manifest
+index 7214821fc5..febe42afa8 100644
+--- a/browser/components/BrowserComponents.manifest
++++ b/browser/components/BrowserComponents.manifest
+@@ -211,7 +211,9 @@ category browser-quit-application-granted moz-src:///browser/components/places/I
+ category browser-quit-application-granted moz-src:///browser/components/pagedata/PageDataService.sys.mjs PageDataService.uninit
+ category browser-quit-application-granted resource://gre/modules/PageThumbs.sys.mjs PageThumbs.uninit
+ category browser-quit-application-granted resource://gre/modules/NewTabUtils.sys.mjs NewTabUtils.uninit
++#ifdef MOZ_NORMANDY
+ category browser-quit-application-granted resource://normandy/Normandy.sys.mjs Normandy.uninit
++#endif
+ category browser-quit-application-granted resource://gre/modules/RFPHelper.sys.mjs RFPHelper.uninit
+ category browser-quit-application-granted resource:///modules/asrouter/ASRouterNewTabHook.sys.mjs ASRouterNewTabHook.destroy
+ category browser-quit-application-granted moz-src:///browser/components/search/SERPCategorization.sys.mjs SERPCategorization.uninit
+diff --git a/browser/moz.configure b/browser/moz.configure
+index ed6110e929..c4b7516fdd 100644
+--- a/browser/moz.configure
++++ b/browser/moz.configure
+@@ -7,7 +7,11 @@ imply_option("MOZ_SERVICES_HEALTHREPORT", True)
+ imply_option("MOZ_SERVICES_SYNC", True)
+ imply_option("MOZ_DEDICATED_PROFILES", True)
+ imply_option("MOZ_BLOCK_PROFILE_DOWNGRADE", True)
+-imply_option("MOZ_NORMANDY", True)
++# Normandy is Mozilla's remote-experiments messenger. Bootowser is a one-product
++# fork: a kiosk runs only pages the operator chose, so there is nothing for
++# remote experiments to reach. The component and its recipe runner are compiled
++# out instead of just silent, and the implied default of True is inverted.
++imply_option("MOZ_NORMANDY", False)
+ imply_option("MOZ_PROFILE_MIGRATOR", True)
+ 
+ 
+@@ -20,6 +24,9 @@ imply_option("MOZ_PROFILE_MIGRATOR", True)
+ # accept that pages gate on it: it defaults to empty, which makes the User
+ # Agent fall back to application.ini's "Name", so leaving it out would serve
+ # every page "bootowser/<version>" and get the kiosk treated as a bot.
++# MOZ_APP_VENDOR must be non-empty (check_moz_app_vendor in toolkit/moz.configure
++# dies otherwise), so the "--version" print deduplicates it in nsAppRunner.cpp
++# when vendor and name are the same string, rather than here.
+ imply_option("MOZ_APP_VENDOR", "Bootowser")
+ # application.ini's "Profile" field: the profile name inside the profile root.
+ # The root itself is not this -- MOZ_DEDICATED_PROFILES is on in browser/, so a
+@@ -27,10 +34,9 @@ imply_option("MOZ_APP_VENDOR", "Bootowser")
+ # sharing ~/.mozilla/ with whatever else is installed.
+ imply_option("MOZ_APP_PROFILE", "bootowser")
+ imply_option("MOZ_APP_UA_NAME", "Firefox")
+-# Left as Firefox's GUID on purpose: it keys the crash reporter submission URL
+-# and the update channel, which still point at Mozilla infrastructure. Give
+-# Bootowser its own GUID only once you also run your own crash collection and a
+-# signed update channel.
++# Left as Firefox's GUID on purpose: it is what makes Firefox treatments (safe
++# browsing lists, certificate data, proxy bypass lists) keep working unchanged.
++# Give Bootowser its own GUID only once you also run those services yourself.
+ imply_option("MOZ_APP_ID", "{ec8030f7-c20a-464f-9b0e-13a3a9e97384}")
+ # Include the DevTools client, not just the server (which is the default)
+ imply_option("MOZ_DEVTOOLS", "all")
+diff --git a/build/moz.configure/update-programs.configure b/build/moz.configure/update-programs.configure
+index 2d93851b90..fbf88eb1f7 100644
+--- a/build/moz.configure/update-programs.configure
++++ b/build/moz.configure/update-programs.configure
+@@ -26,7 +26,10 @@ set_config("DMG_INSTALL_HELPER_DEBUG", debug_dmg_install_helper)
+ def updater_default(build_project, target):
+     if build_project == "tools/update-programs":
+         return True
+-    return build_project != "mobile/android" and target.os != "iOS"
++    # Bootowser is one immutable image: it is replaced, not updated in place,
++    # so the self-updater is compiled out unconditionally. Nothing would sign
++    # or serve the update channel it needs.
++    return False
+ 
+ 
+ option(
+diff --git a/toolkit/components/moz.build b/toolkit/components/moz.build
+index 0a11cad87d..a823a32e13 100644
+--- a/toolkit/components/moz.build
++++ b/toolkit/components/moz.build
+@@ -146,7 +146,11 @@ if CONFIG["MOZ_WIDGET_TOOLKIT"] not in ("android", "windows"):
+     DIRS += ["aboutwebauthn"]
+ 
+ if CONFIG["MOZ_BUILD_APP"] == "browser":
+-    DIRS += ["messaging-system", "normandy"]
++    DIRS += ["messaging-system"]
++    if not CONFIG["MOZ_BOOTOWSER"]:
++        # Normandy's recipe runner is Mozilla's remote-experiments messenger.
++        # Built out of the kiosk along with MOZ_NORMANDY (browser/moz.configure).
++        DIRS += ["normandy"]
+ 
+ if CONFIG["MOZ_BUILD_APP"] != "comm/mail":
+     DIRS += ["ipprotection"]
+diff --git a/toolkit/moz.configure b/toolkit/moz.configure
+index a40484d32b..defac65b7a 100644
+--- a/toolkit/moz.configure
++++ b/toolkit/moz.configure
+@@ -3503,12 +3503,9 @@ with only_when(compile_environment):
+ # ==============================================================
+ @depends(target, developer_options, artifact_builds)
+ def crashreporter_default(target, developer_options, artifacts):
+-    if target.os in ("WINNT", "OSX"):
+-        return True
+-    if target.kernel == "Linux" and target.cpu in ("x86", "x86_64", "arm", "aarch64"):
+-        # The crash reporter prevents crash stacktraces to be logged in the
+-        # logs on Android, so we leave it out by default in developer builds.
+-        return target.os != "Android" or not developer_options or artifacts
++    # Bootowser is a one-product fork. The crash reporter GUI popping up over
++    # the kiosk display would be a denial of service, and nothing collects the
++    # minidumps anyway, so it is compiled out unconditionally.
+     return False
+ 
+ 
+diff --git a/toolkit/xre/nsAppRunner.cpp b/toolkit/xre/nsAppRunner.cpp
+index 1cf5753154..f116b57549 100644
+--- a/toolkit/xre/nsAppRunner.cpp
++++ b/toolkit/xre/nsAppRunner.cpp
+@@ -2256,7 +2256,9 @@ static void DumpHelp() {
+ }
+ 
+ static inline void DumpVersion() {
+-  if (gAppData->vendor && *gAppData->vendor) {
++  // Bootowser sets vendor and name to the same string, so print each once.
++  if (gAppData->vendor && gAppData->name &&
++      strcmp(gAppData->vendor, gAppData->name) != 0) {
+     printf("%s ", (const char*)gAppData->vendor);
+   }
+   printf("%s ", (const char*)gAppData->name);
+@@ -2272,7 +2274,9 @@ static inline void DumpVersion() {
+ }
+ 
+ static inline void DumpFullVersion() {
+-  if (gAppData->vendor && *gAppData->vendor) {
++  // Bootowser sets vendor and name to the same string, so print each once.
++  if (gAppData->vendor && gAppData->name &&
++      strcmp(gAppData->vendor, gAppData->name) != 0) {
+     printf("%s ", (const char*)gAppData->vendor);
+   }
+   printf("%s ", (const char*)gAppData->name);

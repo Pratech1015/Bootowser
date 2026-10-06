@@ -2,3 +2,4 @@
 0002-remove-ui-escape-hatches-kiosk-mode-leaves-behind.patch
 0003-rename-the-browser-to-bootowser.patch
 0004-remove-unused-browser-chrome.patch
+0005-strip-crash-reporter-updater-and-remote-experiments.patch

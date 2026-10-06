@@ -170,6 +170,7 @@ must not be negotiable into the binary:
 | `0001` | top-level navigations are limited to http/https/about:blank |
 | `0002` | Ctrl+O, Ctrl+L and F12 do nothing |
 | `0004` | the 28 unused key bindings and the F10 menu bar are gone from the binary, not just hidden |
+| `0005` | the crash reporter, updater and remote-experiment runner are compiled out, so nothing can put a dialog or a background updater on top of the kiosk display |
 
 The reason this is not left to policy: `--kiosk` removes the chrome but nothing
 in it stops the *page* from navigating away. A link, a redirect, a form target

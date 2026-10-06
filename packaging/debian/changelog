@@ -1,7 +1,7 @@
 bootowser (0.1.0-1) unstable; urgency=medium
 
-  * Initial release: stripped Chromium kiosk browser runtime, systemd units,
-    minimal X server configuration. No boot splash is shipped; the browser
-    waits for the system's existing Plymouth theme to finish.
+  * Initial release: Firefox 156-based kiosk runtime, systemd units, minimal
+    X server configuration. No boot splash is shipped; the browser waits for
+    the system's existing Plymouth theme to finish.
 
  -- Pratech1015 <pragyan.krish3@gmail.com>  Wed, 30 Sep 2026 00:00:00 +0530

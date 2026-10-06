@@ -16,19 +16,20 @@ Depends: ${misc:Depends},
          x11-xserver-utils
 Recommends: x11-xserver-utils
 Suggests: mesa-utils
-Description: stripped Chromium kiosk browser that takes the screen at boot
- Bootowser replaces the boot splash with a real web browser. It is a
- stripped-down Chromium build -- no tabs, no omnibox, no settings, no
- extensions, no telemetry -- that starts automatically at boot and shows a
- single fullscreen page.
+Description: stripped-down Firefox kiosk that takes the screen at boot
+ Bootowser replaces the boot splash with a real web browser. It runs a
+ patched Firefox 156 build -- no tabs, no address bar, no menus, no
+ developer tools, no remote experiments -- under a managed policy that
+ locks it down, and it starts automatically at boot showing one
+ fullscreen page.
  .
  It is aimed at single-purpose devices: signage, information kiosks,
  menu boards and TV-style displays where a full desktop environment is more
  than the device needs.
  .
- The browser binary is a separately built Chromium (see the browser/ directory
- in the upstream repository). This package ships the runtime, the systemd
- units and a minimal X server configuration. It ships no boot splash of its
- own: whatever Plymouth theme the system already uses keeps showing during
- boot, and Bootowser waits for plymouth-quit-wait.service before taking over
- the screen.
+ The browser is a separately built, patched Firefox tree (see the firefox/
+ directory in the upstream repository). This package ships the runtime, the
+ systemd units and a minimal X server configuration. It ships no boot splash
+ of its own: whatever Plymouth theme the system already uses keeps showing
+ during boot, and Bootowser waits for plymouth-quit-wait.service before
+ taking over the screen.
