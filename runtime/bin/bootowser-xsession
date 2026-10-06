@@ -2,7 +2,7 @@
 #
 # bootowser-xsession - start the minimal X server Bootowser renders into.
 #
-# Chromium needs a display server; it cannot paint on a bare text console.
+# Firefox needs a display server; it cannot paint on a bare text console.
 # Bootowser therefore ships a deliberately dumb X server configuration:
 #
 #   * no window manager      - kiosk windows do not need to be decorated or moved

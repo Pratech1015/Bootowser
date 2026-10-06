@@ -10,8 +10,9 @@
 # keeps showing during boot, and bootowser.service simply waits for
 # plymouth-quit-wait.service before taking the screen.
 #
-# The browser binary is NOT installed by this script: build it first with
-# browser/build.sh and point --browser at it, or let the package manager do it.
+# Bootowser is NOT installed by this script: point --browser at a build tree
+# (see firefox/fetch.sh). A distro Firefox is only usable with
+# ALLOW_SYSTEM_BROWSER=1, because it has none of the source patches.
 #
 set -euo pipefail
 
@@ -31,10 +32,14 @@ ENABLE_NOW=0
 BROWSER_BIN=""
 
 usage() {
+  # LIB_DIR is derived from PREFIX further down, and this runs before that.
+  # Under `set -u` an unset reference aborts, so --help would not even print.
+  local lib_dir="${PREFIX}/lib/bootowser"
   cat <<EOF
 Usage: ${0##*/} [options]
 
-  --browser PATH   install PATH as ${LIB_DIR}/chrome (required to actually boot)
+  --browser DIR    install the Bootowser tree from DIR as ${lib_dir}/bootowser
+                   (optional; see ALLOW_SYSTEM_BROWSER below)
   --enable         enable bootowser.service at boot
   --now            start bootowser.service immediately (implies --enable)
   --prefix DIR     install under DIR instead of ${PREFIX}
@@ -118,7 +123,7 @@ fi
 # --- Layout ----------------------------------------------------------------
 log "installing to ${PREFIX}"
 install -d -m 0755 "${LIB_DIR}" "${SHARE_DIR}" "${UNIT_DIR}"
-install -d -m 0755 "${ETC_DIR}" "${ETC_DIR}/policies/managed"
+install -d -m 0755 "${ETC_DIR}"
 if [ "${UNPRIV}" -eq 0 ]; then
   install -d -m 0700 -o "${SERVICE_USER}" -g "${SERVICE_USER}" \
                 "${STATE_DIR}" "${STATE_DIR}/profile"
@@ -140,44 +145,132 @@ else
   install -m 0644 "${conf_src}" "${conf_dest}"
 fi
 
-policy="${REPO_ROOT}/runtime/etc/bootowser/policies/managed/bootowser.json"
-if [ -e "${ETC_DIR}/policies/managed/bootowser.json" ]; then
-  warn "existing managed policy left in place (copy ${policy} to ${ETC_DIR}.new and merge)"
-  install -m 0644 "${policy}" "${ETC_DIR}/policies/managed/bootowser.json.dist"
+policy="${REPO_ROOT}/runtime/etc/bootowser/policies/managed/policies.json"
+
+# --- Control sidecar config, sudoers rule, root hooks -----------------------
+# Same never-clobber rule as bootowser.conf: the operator tunes
+# ALLOWED_ORIGINS per deployment and must not lose it to a reinstall.
+control_conf_src="${REPO_ROOT}/runtime/etc/bootowser/control.conf"
+control_conf_dest="${ETC_DIR}/control.conf"
+if [ -e "${control_conf_dest}" ]; then
+  warn "${control_conf_dest} already exists, leaving it alone"
+  install -m 0644 "${control_conf_src}" "${control_conf_dest}.dist"
 else
-  install -m 0644 "${policy}" "${ETC_DIR}/policies/managed/bootowser.json"
+  install -m 0644 "${control_conf_src}" "${control_conf_dest}"
 fi
+
+# sudo only ever reads /etc/sudoers.d, even for a --prefix install; a
+# throwaway dry run gets a look-alike under the prefix instead.
+if [ "${UNPRIV}" -eq 1 ]; then
+  sudoers_dir="${PREFIX}/etc/sudoers.d"
+else
+  sudoers_dir="/etc/sudoers.d"
+fi
+install -d -m 0755 "${sudoers_dir}"
+# 0440: sudo insists on group-readable, non-world-writable sudoers files.
+install -m 0440 "${REPO_ROOT}/runtime/lib/sudoers.d/bootowser" "${sudoers_dir}/bootowser"
+
+# Root hooks must be root-owned and not writable by others -- RunRoot
+# re-checks that before every execution and refuses otherwise, so install
+# them the way sudo expects to see them.
+install -d -m 0755 "${LIB_DIR}/commands"
+for f in "${REPO_ROOT}"/runtime/lib/bootowser/commands/*.sh; do
+  install -m 0755 "$f" "${LIB_DIR}/commands/${f##*/}"
+done
 
 # --- Xorg config -----------------------------------------------------------
 install -m 0644 "${REPO_ROOT}/runtime/xorg/xorg.conf" "${SHARE_DIR}/xorg.conf"
 
-# --- Browser binary --------------------------------------------------------
+# --- Browser ---------------------------------------------------------------
+# Bootowser is a directory, not a single binary: the launcher needs the
+# executable, the shared libraries, the chrome/ resource tree and the
+# localisation bundles. Copying only the executable produces a browser that
+# starts and then renders nothing, so the whole tree is installed.
+install_browser_tree() {
+  local src="$1" dest="${LIB_DIR}/bootowser"
+  # The renamed build produces dist/bin/bootowser; accept a stock firefox binary
+  # too so a tree from before the rebrand still installs.
+  local exe=""
+  for candidate in bootowser firefox; do
+    if [ -x "${src}/${candidate}" ]; then exe="${candidate}"; break; fi
+  done
+  [ -n "${exe}" ] || die "no executable bootowser (or firefox) in ${src}; is this a browser install dir?"
+  log "installing Bootowser tree from ${src} (${exe})"
+  rm -rf "${dest}"
+  mkdir -p "${dest}"
+  cp -a "${src}"/. "${dest}/"
+
+  # The control sidecar is part of the same build tree (toolkit/
+  # bootowser-control) but installs at a stable path so the unit's
+  # ConditionPathExists can tell "no patched tree here" from "broken install".
+  # A tree without it (built before the feature) means the page's API is
+  # simply unavailable -- bootowser.service still runs.
+  if [ -x "${src}/bootowser-control" ]; then
+    install -m 0755 "${src}/bootowser-control" "${LIB_DIR}/bootowser-control"
+    log "installed control sidecar to ${LIB_DIR}/bootowser-control"
+  else
+    warn "tree has no bootowser-control; the kiosk page's command API will not work"
+  fi
+
+  # Gecko finds libxul.so and the resource tree relative to the real binary
+  # path. /usr/lib/bootowser/bootowser is that path after install, but the tree
+  # may have been staged elsewhere.
+  [ -e "${dest}/libxul.so" ] || warn "installed tree is missing libxul.so; the browser may not start"
+
+  # Note: no omni.ja check. Gecko has not shipped one as a requirement for a
+  # long time -- a Firefox 156 build from this tree runs with unpacked chrome/,
+  # locales/ and *.ftl files and has no omni.ja at all, so checking for it only
+  # ever produced a spurious warning.
+  #Gecko reads managed policy from <install dir>/distribution/policies.json,
+  # so the policy has to live inside the tree we just installed.
+  install -d -m 0755 "${dest}/distribution"
+  install -m 0644 "${policy}" "${dest}/distribution/policies.json"
+  log "installed policy to ${dest}/distribution/policies.json"
+}
+
 if [ -n "${BROWSER_BIN}" ]; then
-  [ -x "${BROWSER_BIN}" ] || die "browser binary not executable: ${BROWSER_BIN}"
-  log "installing browser binary"
-  install -m 0755 "${BROWSER_BIN}" "${LIB_DIR}/chrome"
-  # Chromium's runtime bits: locales, ANGLE, swiftshader, .pak files. Without
-  # these the browser starts and then renders nothing at all.
-  src_dir="$(dirname "$(readlink -f "${BROWSER_BIN}")")"
-  for d in locales swiftshader; do
-    if [ -d "${src_dir}/${d}" ]; then
-      log "installing ${d}/"
-      cp -a "${src_dir}/${d}" "${LIB_DIR}/"
-    fi
-  done
-  shopt -s nullglob
-  for pak in "${src_dir}"/*.pak; do
-    install -m 0644 "${pak}" "${LIB_DIR}/"
-  done
-  if [ -f "${src_dir}/icudtl.dat" ]; then
-    install -m 0644 "${src_dir}/icudtl.dat" "${LIB_DIR}/"
+  # Accept either the install dir or the binary inside it.
+  if [ -f "${BROWSER_BIN}" ]; then
+    BROWSER_BIN="$(dirname -- "$(readlink -f -- "${BROWSER_BIN}")")"
   fi
-  if [ -x "${src_dir}/chrome_sandbox" ]; then
-    log "installing SUID sandbox helper"
-    install -m 4755 -o root -g root "${src_dir}/chrome_sandbox" "${LIB_DIR}/chrome_sandbox"
-  fi
+  [ -d "${BROWSER_BIN}" ] || die "--browser expects a browser directory or binary, got: ${BROWSER_BIN}"
+  install_browser_tree "${BROWSER_BIN}"
 else
-  warn "no --browser given: ${LIB_DIR}/chrome is missing, the kiosk will not start yet"
+  # No --browser: fall back to the host package, which is unpatched and so only
+  # usable with ALLOW_SYSTEM_BROWSER=1. See the launcher.
+  host=""
+  for c in /usr/lib/bootowser/bootowser /usr/lib/firefox/firefox \
+           /usr/lib64/firefox/firefox /usr/lib/firefox-esr/firefox-esr /usr/bin/firefox
+  do
+    if [ -x "$c" ]; then host="$c"; break; fi
+  done
+  if [ -n "${host}" ]; then
+    host_dir="$(dirname -- "$(readlink -f -- "${host}")")"
+    log "no --browser given; using the system browser at ${host}"
+    warn "using the distribution's browser: it can be replaced by a package update, and it carries none of the Bootowser source patches"
+    warn "the launcher will refuse to start it unless ALLOW_SYSTEM_BROWSER=1 is set in ${ETC_DIR}/bootowser.conf"
+    # A sidecar from an earlier --browser install would keep working here (it
+    # is standalone), but offering the API with an unpatched browser in front
+    # of it is a support trap: remove it so what runs is what was installed.
+    if [ -e "${LIB_DIR}/bootowser-control" ]; then
+      warn "removing ${LIB_DIR}/bootowser-control: the control API is only offered with an installed Bootowser tree (--browser)"
+      rm -f "${LIB_DIR}/bootowser-control"
+    fi
+    # The host tree is package-managed, so its policy is written only when the
+    # location is ours to use. Otherwise Bootowser would fight the package on
+    # every update. A dry run never writes outside its throwaway prefix.
+    if [ "${UNPRIV}" -eq 1 ]; then
+      warn "dry run: not writing a policy into ${host_dir}"
+    elif [ -w "${host_dir}" ]; then
+      install -d -m 0755 "${host_dir}/distribution"
+      install -m 0644 "${policy}" "${host_dir}/distribution/policies.json"
+      log "installed policy to ${host_dir}/distribution/policies.json"
+    else
+      die "cannot write ${host_dir}/distribution/policies.json; pass --browser DIR to install a private Firefox tree with its policy"
+    fi
+  else
+    warn "no --browser given and no system Firefox found; the kiosk will not start until Firefox is installed"
+  fi
 fi
 
 # --- systemd ---------------------------------------------------------------
@@ -186,6 +279,8 @@ install -m 0644 "${REPO_ROOT}/runtime/lib/systemd/system/bootowser.service" \
                "${UNIT_DIR}/bootowser.service"
 install -m 0644 "${REPO_ROOT}/runtime/lib/systemd/system/bootowser-xserver.service" \
                "${UNIT_DIR}/bootowser-xserver.service"
+install -m 0644 "${REPO_ROOT}/runtime/lib/systemd/system/bootowser-control.service" \
+               "${UNIT_DIR}/bootowser-control.service"
 
 if [ "${UNPRIV}" -eq 1 ]; then
   warn "dry run: not masking getty@tty1, not reloading or starting systemd"
@@ -200,8 +295,8 @@ if [ "${UNPRIV}" -eq 0 ]; then
   systemctl daemon-reload
 
   if [ "${ENABLE_SERVICE}" -eq 1 ]; then
-    log "enabling bootowser.service"
-    systemctl enable bootowser.service bootowser-xserver.service
+    log "enabling bootowser units"
+    systemctl enable bootowser.service bootowser-xserver.service bootowser-control.service
   fi
 
   if [ "${ENABLE_NOW}" -eq 1 ]; then
@@ -217,9 +312,11 @@ Bootowser runtime installed.
 
 Next:
   1. Set your start URL:        \$EDITOR ${ETC_DIR}/bootowser.conf
-  2. Start it now:              systemctl start bootowser
-  3. Follow the log:            journalctl -fu bootowser
-  4. Undo everything:           ${REPO_ROOT}/tools/uninstall.sh
+  2. Allow your page to call the command API (same origin as START_URL):
+                                \$EDITOR ${ETC_DIR}/control.conf
+  3. Start it now:              systemctl start bootowser
+  4. Follow the log:            journalctl -fu bootowser
+  5. Undo everything:           ${REPO_ROOT}/tools/uninstall.sh
 
 Your existing Plymouth theme is untouched: it shows during boot as usual, and
 Bootowser takes the screen once plymouth-quit-wait.service releases it. On a

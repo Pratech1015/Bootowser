@@ -2,37 +2,63 @@
 #
 # Build the Bootowser runtime Debian package.
 #
-# The browser binary is not built here; it is taken from
-# ../../out/Release/chrome, or from $BOOTOWSER_BROWSER. Override the sources
-# directory with `debian/rules binary` from the repository root, or set
-# BOOTOWSER_DEB_SRC to a prepared tree.
+# Firefox is not built here. A tree is taken from $BOOTOWSER_FIREFOX, or from
+# firefox-tree/ in the source tarball, or from the distribution's firefox
+# package, in that order.
 
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+# Without this, every un-continued recipe line runs in its own shell and a
+# variable set on one line is empty on the next. That turns
+# `cp -a "$ffdir"/. dest` into `cp -a "/." dest`, which copies the whole root
+# filesystem into the build directory.
+.ONESHELL:
 
 %:
 	dh $@
 
 override_dh_auto_build:
-	# ---- locate the prebuilt browser ------------------------------------
-	browser="$(BOOTOWSER_BROWSER)"; \
-	if [ -z "$$browser" ]; then \
-	  for c in ../../out/Release/chrome out/Release/chrome; do \
-	    if [ -x "$$c" ]; then browser="$$c"; break; fi; \
-	  done; \
-	fi; \
-	if [ -z "$$browser" ] || [ ! -x "$$browser" ]; then \
-	  echo "error: no Bootowser browser binary found." >&2; \
-	  echo "       Build it first:  cd browser && ./fetch.sh && ./build.sh" >&2; \
-	  exit 1; \
-	fi; \
-	echo "using browser binary: $$browser"
+	# ---- locate a Firefox install tree ---------------------------------
+	# Two Makefile rules bite here and both produce a silent, wrong result:
+	#   * .ONESHELL above, or a single backslash-continued line, so that
+	#     ffdir survives from the assignment into the copy below.
+	#   * every shell variable needs $$ so Make emits a literal $. Written as
+	#     $ffdir, Make substitutes the variable $f and leaves "fdir".
+	ffdir=""
+	# An explicitly requested tree that is not usable is an error, never a
+	# silent fall back to the system browser: quietly shipping a different
+	# browser than the operator asked for is worse than failing.
+	if [ -n "$${BOOTOWSER_FIREFOX:-}" ]; then
+		if [ ! -x "$${BOOTOWSER_FIREFOX}" ]; then
+			echo "error: BOOTOWSER_FIREFOX=$${BOOTOWSER_FIREFOX} is not executable" >&2
+			exit 1
+		fi
+		ffdir=$$(dirname $$(readlink -f "$${BOOTOWSER_FIREFOX}"))
+	elif [ -x "firefox-tree/firefox" ]; then
+		ffdir="firefox-tree"
+	else
+		for c in /usr/lib/firefox/firefox /usr/lib/firefox-esr/firefox-esr /usr/bin/firefox; do
+			if [ -x "$$c" ]; then ffdir=$$(dirname "$$c"); break; fi
+		done
+	fi
+	if [ -z "$$ffdir" ]; then
+		echo "error: no Firefox installation found." >&2
+		echo "       install firefox, or set BOOTOWSER_FIREFOX to a built tree." >&2
+		exit 1
+	fi
+	# A bare libxul.so is not a browser directory; catch that mistake early.
+	if [ ! -e "$$ffdir/omni.ja" ] && [ ! -e "$$ffdir/libxul.so" ]; then
+		echo "error: $$ffdir does not look like a Firefox install directory." >&2
+		exit 1
+	fi
+	echo "using Firefox tree: $$ffdir"
 
 	# ---- lay down the runtime tree --------------------------------------
 	install -d debian/bootowser/usr/lib/bootowser
 	install -d debian/bootowser/usr/share/bootowser
-	install -d debian/bootowser/etc/bootowser/policies/managed
 	install -d debian/bootowser/usr/share/doc/bootowser
 	install -d debian/bootowser/usr/share/licenses/bootowser
+	install -d debian/bootowser/lib/systemd/system
 
 	install -m 0755 runtime/bin/bootowser          debian/bootowser/usr/lib/bootowser/bootowser
 	install -m 0755 runtime/bin/bootowser-xsession debian/bootowser/usr/lib/bootowser/bootowser-xsession
@@ -42,26 +68,51 @@ override_dh_auto_build:
 	               debian/bootowser/lib/systemd/system/bootowser.service
 	install -m 0644 runtime/lib/systemd/system/bootowser-xserver.service \
 	               debian/bootowser/lib/systemd/system/bootowser-xserver.service
+	install -m 0644 runtime/lib/systemd/system/bootowser-control.service \
+	               debian/bootowser/lib/systemd/system/bootowser-control.service
 
 	install -m 0644 runtime/etc/bootowser/bootowser.conf \
 	               debian/bootowser/etc/bootowser/bootowser.conf
-	install -m 0644 runtime/etc/bootowser/policies/managed/bootowser.json \
-	               debian/bootowser/etc/bootowser/policies/managed/bootowser.json
+	install -m 0644 runtime/etc/bootowser/control.conf \
+	               debian/bootowser/etc/bootowser/control.conf
+	install -m 0644 runtime/etc/bootowser/policies/managed/policies.json \
+	               debian/bootowser/etc/bootowser/distribution/policies.json
 
-	# ---- the browser and the data it cannot start without ---------------
-	install -m 0755 "$$browser" debian/bootowser/usr/lib/bootowser/chrome
-	bdir=$$(dirname $$(readlink -f "$$browser")); \
-	if [ -f "$$bdir/icudtl.dat" ]; then \
-	  install -m 0644 "$$bdir/icudtl.dat" debian/bootowser/usr/lib/bootowser/; \
-	fi; \
-	for f in "$$bdir"/*.pak "$$bdir"/*.bin; do \
-	  [ -f "$$f" ] && install -m 0644 "$$f" debian/bootowser/usr/lib/bootowser/; \
-	done; \
-	for d in locales swiftshader; do \
-	  [ -d "$$bdir/$$d" ] && cp -a "$$bdir/$$d" debian/bootowser/usr/lib/bootowser/; \
-	done; \
-	if [ -f "$$bdir/chrome_sandbox" ]; then \
-	  install -m 4755 "$$bdir/chrome_sandbox" debian/bootowser/usr/lib/bootowser/chrome_sandbox; \
+	# Root hooks for the control sidecar: sudoers rule (0440, validated in
+	# postinst) and the root-owned command scripts it may escalate to.
+	install -d debian/bootowser/etc/sudoers.d
+	install -m 0440 runtime/lib/sudoers.d/bootowser \
+	                debian/bootowser/etc/sudoers.d/bootowser
+	install -d debian/bootowser/usr/lib/bootowser/commands
+	for f in runtime/lib/bootowser/commands/*.sh; do \
+	  install -m 0755 "$$f" "debian/bootowser/usr/lib/bootowser/commands/$${f##*/}"; \
+	done
+
+	# ---- the whole Firefox tree -----------------------------------------
+	install -d debian/bootowser/usr/lib/bootowser/firefox
+	# If ffdir were ever empty, `cp -a "$$ffdir"/.` is `cp -a "/."` and would
+	# copy the entire root filesystem into the build directory. Refuse instead.
+	case "$$ffdir" in
+		""|/) echo "error: refusing to copy from '$$ffdir'" >&2; exit 1 ;;
+	esac
+	[ -x "$$ffdir/firefox" ] || { echo "error: $$ffdir/firefox is not executable" >&2; exit 1; }
+	cp -a "$$ffdir"/. debian/bootowser/usr/lib/bootowser/firefox/
+
+	# Firefox reads managed policy from <install dir>/distribution/policies.json,
+	# so the policy has to live inside the bundled tree; anywhere else and the
+	# kiosk starts with no policy applied at all.
+	install -m 0644 runtime/etc/bootowser/policies/managed/policies.json \
+	               debian/bootowser/usr/lib/bootowser/firefox/distribution/policies.json
+
+	# The control sidecar is built from the same tree (toolkit/
+	# bootowser-control). A tree staged before the feature has no binary; the
+	# unit's ConditionPathExists then keeps the API off rather than failing
+	# the package build.
+	if [ -x "$$ffdir/bootowser-control" ]; then
+		install -m 0755 "$$ffdir/bootowser-control" \
+		                debian/bootowser/usr/lib/bootowser/bootowser-control
+	else
+		echo "warning: $$ffdir has no bootowser-control; the package will ship without the control API" >&2
 	fi
 
 	install -m 0644 LICENSE debian/bootowser/usr/share/doc/bootowser/copyright
@@ -74,8 +125,16 @@ override_dh_auto_install:
 override_dh_installsystemd:
 	dh_installsystemd --name=bootowser-xserver --no-enable --no-start
 	dh_installsystemd --name=bootowser --no-enable --no-start
-	dh_systemd_enable --no-enable bootowser.service bootowser-xserver.service || true
+	dh_installsystemd --name=bootowser-control --no-enable --no-start
+	dh_systemd_enable --no-enable bootowser.service bootowser-xserver.service \
+	                 bootowser-control.service || true
 
 override_dh_fixperms:
 	dh_fixperms
-	chmod 4755 debian/bootowser/usr/lib/bootowser/chrome_sandbox 2>/dev/null || true
+	# Firefox's sandbox is namespaces-based and needs no setuid helper, unlike
+	# Chromium's chrome_sandbox. The tree stays root-owned and unwritable by
+	# the kiosk user, which is the sandbox needs to hold.
+	chmod -R go-w debian/bootowser/usr/lib/bootowser/firefox
+	# sudo rejects a sudoers fragment that is group- or world-writable; pin
+	# the mode dh_fixperms would otherwise normalise to 0644.
+	chmod 0440 debian/bootowser/etc/sudoers.d/bootowser

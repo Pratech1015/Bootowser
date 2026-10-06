@@ -12,6 +12,7 @@ Package: bootowser
 Architecture: amd64
 Depends: ${misc:Depends},
          systemd,
+         sudo,
          xserver-xorg-core | xserver-xorg-video,
          x11-xserver-utils
 Recommends: x11-xserver-utils
@@ -33,3 +34,7 @@ Description: stripped-down Firefox kiosk that takes the screen at boot
  of its own: whatever Plymouth theme the system already uses keeps showing
  during boot, and Bootowser waits for plymouth-quit-wait.service before
  taking over the screen.
+ .
+ A control sidecar lets the kiosk page request shell commands over a
+ loopback-only HTTP API, with root hooks limited to the shipped scripts in
+ /usr/lib/bootowser/commands via sudo.

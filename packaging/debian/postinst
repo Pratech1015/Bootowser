@@ -18,6 +18,16 @@ case "$1" in
 
     install -d -m 0700 -o bootowser -g bootowser /var/lib/bootowser/profile
 
+    # The control sidecar escalates only through this fragment; a syntax
+    # error here would be noticed exactly when someone needs a root hook.
+    # visudo -c also pins ownership/mode expectations when run as root.
+    if [ -e /etc/sudoers.d/bootowser ] && command -v visudo >/dev/null 2>&1; then
+      if ! visudo -cf /etc/sudoers.d/bootowser >/dev/null 2>&1; then
+        echo "bootowser: WARNING: /etc/sudoers.d/bootowser fails sudoers validation;" >&2
+        echo "             root hooks will not work until it is fixed." >&2
+      fi
+    fi
+
     if [ -z "$2" ] && [ -e /etc/bootowser/bootowser.conf ]; then
       # A fresh install ships a placeholder URL. Kiosks that boot to
       # about:blank look broken, so make the next step obvious.
@@ -27,6 +37,15 @@ case "$1" in
 bootowser: set your start URL before enabling the service:
     $EDITOR /etc/bootowser/bootowser.conf
     systemctl enable --now bootowser
+
+MSG
+      fi
+      if [ -x /usr/lib/bootowser/bootowser-control ] \
+         && grep -q '^ALLOWED_ORIGINS="https://start.example.com"' \
+              /etc/bootowser/control.conf 2>/dev/null; then
+        cat >&2 <<'MSG'
+bootowser: to let that page call the command API, allow its origin:
+    $EDITOR /etc/bootowser/control.conf   # ALLOWED_ORIGINS must match START_URL
 
 MSG
       fi

@@ -1,0 +1,12 @@
+# Bootowser control sidecar root hooks.
+#
+# The sidecar runs as the unprivileged kiosk user and escalates only through
+# `sudo -n` to the scripts in this directory. The wildcard matches every
+# entry directly inside the directory (a forward slash is never matched by
+# a sudoers wildcard) and the trailing ` *` passes arbitrary arguments.
+#
+# Arguments are attacker-controlled whenever the kiosk page is: every script
+# in this directory must validate its own arguments like the untrusted input
+# they are. Keep scripts root-owned and never group- or world-writable --
+# the sidecar re-checks that before every run and refuses otherwise.
+bootowser ALL=(root) NOPASSWD: /usr/lib/bootowser/commands/* *

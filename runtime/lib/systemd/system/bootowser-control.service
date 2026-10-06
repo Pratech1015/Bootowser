@@ -1,0 +1,85 @@
+[Unit]
+Description=Bootowser kiosk command control sidecar
+Documentation=https://github.com/Pratech1015/Bootowser
+
+# The kiosk page calls the API the moment it loads, so the sidecar has to be
+# up first. bootowser.service pulls this in with Wants=/After=; the
+# ConditionPathExists is what turns the feature off cleanly on hosts that
+# installed only a system browser (no patched tree, so no sidecar binary).
+Before=bootowser.service
+ConditionPathExists=/usr/lib/bootowser/bootowser-control
+
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+# Unprivileged like the browser; root hooks go through sudo -n against the
+# scripts in the commands directory only (see /etc/sudoers.d/bootowser).
+User=bootowser
+Group=bootowser
+EnvironmentFile=/etc/bootowser/control.conf
+ExecStart=/usr/lib/bootowser/bootowser-control
+
+Restart=always
+RestartSec=3
+TimeoutStopSec=10
+
+# sudo/pam are happier with a real HOME; the state directory is the
+# browser's, and the sidecar never writes to it itself.
+Environment=HOME=/var/lib/bootowser
+
+# --- Hardening -------------------------------------------------------------
+# NoNewPrivileges=false is the whole point of this unit: root hooks escalate
+# via setuid exec (sudo -n). The sandboxing options below do not override
+# that choice in system mode -- systemd only forces NNP for their seccomp
+# filters when the manager itself is unprivileged (user mode); PID 1 has
+# CAP_SYS_ADMIN and installs them without it.
+NoNewPrivileges=false
+
+# RestrictSUIDSGID= is deliberately absent. It only stops a unit from
+# *creating* setuid files, and a bootowser-owned setuid file could escalate
+# to nothing but bootowser -- which the page already is. Leaving it out also
+# means sudo's runtime never depends on an edge case we cannot test before
+# the sudoers rule is installed.
+#
+# SystemCallFilter=@system-service is safe for sudo: the set is an allow
+# list that includes @setuid (setuid/setresuid/setgroups and friends) and
+# capset, which is everything sudo needs to drop privileges correctly.
+# Verify after changing it:   systemd-analyze syscall-filter @system-service
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictRealtime=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+# Refuses writable-then-executable mappings in the daemon itself (it parses
+# network input, so this is the defence that matters). On kernels older than
+# 6.3 this falls back to a seccomp filter that sudo's children would inherit;
+# if root hooks ever fail with a mprotect/mmap error in the journal, this is
+# the line to flip.
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# No outbound connections ever; loopback only, for the API itself.
+IPAddressDeny=any
+IPAddressAllow=localhost
+
+# ProtectSystem=strict would otherwise make sudo's timestamp directory
+# read-only. The leading '-' keeps the unit startable before the first sudo
+# use has created it.
+ReadWritePaths=-/run/sudo -/var/lib/sudo
+
+SyslogIdentifier=bootowser-control
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

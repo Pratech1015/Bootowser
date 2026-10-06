@@ -40,6 +40,10 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*" >&2; }
+die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+
 if [ "${ASSUME_NO}" -ne 1 ]; then
   printf 'Remove Bootowser and restore getty on tty1? [y/N] '
   read -r reply
@@ -48,10 +52,6 @@ if [ "${ASSUME_NO}" -ne 1 ]; then
     *) log "aborted"; exit 0 ;;
   esac
 fi
-
-log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
-warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*" >&2; }
-die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
 LIB_DIR="${PREFIX}/lib/bootowser"
 SHARE_DIR="${PREFIX}/share/bootowser"
@@ -81,7 +81,8 @@ if [ "${UNPRIV}" -eq 1 ]; then
   warn "dry run: not touching systemd"
 elif command -v systemctl >/dev/null 2>&1; then
   log "stopping and disabling bootowser units"
-  systemctl disable --now bootowser.service bootowser-xserver.service 2>/dev/null || true
+  systemctl disable --now bootowser.service bootowser-xserver.service \
+                     bootowser-control.service 2>/dev/null || true
 
   # Give the console back before anything else, so a failure below still
   # leaves the machine bootable and reachable.
@@ -99,10 +100,32 @@ fi
 # --- Files -----------------------------------------------------------------
 # The unit files are removed regardless of whether systemd was reachable, so a
 # --prefix dry run still cleans up after itself.
-rm -f "${UNIT_DIR}/bootowser.service" "${UNIT_DIR}/bootowser-xserver.service"
+rm -f "${UNIT_DIR}/bootowser.service" "${UNIT_DIR}/bootowser-xserver.service" \
+      "${UNIT_DIR}/bootowser-control.service"
+
+# The sudoers rule hands root to scripts under LIB_DIR, so it must not
+# outlive them. Its directory mirrors install.sh: /etc/sudoers.d for a real
+# install, ${PREFIX}/etc/sudoers.d for a dry run.
+if [ "${UNPRIV}" -eq 1 ]; then
+  rm -f "${PREFIX}/etc/sudoers.d/bootowser"
+else
+  rm -f /etc/sudoers.d/bootowser
+fi
 
 log "removing ${LIB_DIR}"
 rm -rf "${LIB_DIR}"
+
+# A policy installed into the host Firefox tree (the no---browser case) lives
+# outside LIB_DIR and would otherwise be orphaned in a package-managed tree.
+for host in /usr/lib/bootowser /usr/lib/firefox /usr/lib64/firefox /usr/lib/firefox-esr; do
+  if [ -f "${host}/distribution/policies.json" ] \
+     && grep -q '"BootowserManaged"[[:space:]]*:[[:space:]]*true' \
+          "${host}/distribution/policies.json" 2>/dev/null; then
+    log "removing Bootowser policy from ${host}/distribution"
+    rm -f "${host}/distribution/policies.json"
+    rmdir "${host}/distribution" 2>/dev/null || true
+  fi
+done
 
 log "removing ${SHARE_DIR}"
 rm -rf "${SHARE_DIR}"

@@ -12,6 +12,14 @@ Documentation=https://github.com/Pratech1015/Bootowser
 After=bootowser-xserver.service plymouth-quit-wait.service systemd-user-sessions.service
 Requires=bootowser-xserver.service
 
+# The page can call the control API (shell commands, root hooks) as soon as
+# it loads, so the sidecar must already be listening. Wants= rather than
+# Requires=: a host installed without the sidecar binary skips it via its
+# ConditionPathExists and the browser still runs (the page's API calls just
+# fail).
+Wants=bootowser-control.service
+After=bootowser-control.service
+
 # The kiosk owns the console. Two things fighting over vt1 produces a flicker
 # at best and a deadlock at worst.
 Conflicts=getty@tty1.service
@@ -54,19 +62,38 @@ ProtectClock=true
 ProtectHostname=true
 RestrictRealtime=true
 RestrictSUIDSGID=true
-RestrictNamespaces=true
+# Firefox's content sandbox creates user namespaces for every content process,
+# so RestrictNamespaces=true would break it. A bare list is an allow-list, so
+# this permits only the namespace types the sandbox needs and denies the rest.
+# Note the syntax is the bare list: a leading "yes" is a parse error.
+RestrictNamespaces=mnt uts ipc pid user cgroup
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 LockPersonality=true
-# Chromium needs a JIT-writable heap for V8 and WebAssembly.
+# Firefox compiles JIT code for SpiderMonkey and WebAssembly, which needs a
+# writable-then-executable heap. This cannot be turned on.
 MemoryDenyWriteExecute=false
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
-# Chromium's sandbox needs to set up namespaces; without CAP_SYS_ADMIN the
-# setuid/namespace sandbox is the fallback and still works.
+# Empty means no capabilities at all, which is the correct default here.
+# Firefox has no setuid helper like Chromium's chrome_sandbox, so its user
+# namespace sandbox does the work and needs no privileges from the parent.
+# Do not add CAP_SYS_ADMIN to make a sandbox failure go away: that would
+# disable the containment the sandbox exists to provide.
 CapabilityBoundingSet=
 
+# Firefox reads $HOME for the default profile location. The kiosk never uses
+# that path (--profile is explicit) but Firefox will still create it on first
+# run, and with ProtectHome=true an unwritable $HOME shows up as a failure to
+# start. Point it at the state directory.
+Environment=HOME=/var/lib/bootowser
+
 # The profile is the only writable path the kiosk needs.
+#
+# PrivateTmp gives a private /tmp but not a private /dev/shm. Firefox needs a
+# writable /dev/shm for its parent/content-process shared memory transport, and
+# PrivateDevices (which would otherwise provide one) would hide the X socket
+# and GPU device nodes the kiosk depends on, so /dev is left alone.
 ReadWritePaths=/var/lib/bootowser
 StateDirectory=bootowser
 StateDirectoryMode=0700

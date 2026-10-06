@@ -132,6 +132,8 @@
       "network.captive-portal-service.enabled": { "Value": false, "Status": "locked" },
       "network.prefetch-next": { "Value": false, "Status": "locked" },
       "network.dns.disablePrefetch": { "Value": true, "Status": "locked" },
+      "network.lna.enabled": { "Value": false, "Status": "locked" },
+      "network.lna.blocking": { "Value": false, "Status": "locked" },
       "browser.region.network.url": { "Value": "", "Status": "locked" },
       "browser.region.update.enabled": { "Value": false, "Status": "locked" },
       "browser.safebrowsing.malware.enabled": { "Value": false, "Status": "locked" },

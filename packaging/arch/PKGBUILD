@@ -1,32 +1,36 @@
 # Maintainer: Pratech1015 <pragyan.krish3@gmail.com>
 #
-# Bootowser: a stripped Chromium kiosk browser that takes the screen at boot.
+# Bootowser: a locked-down Firefox kiosk that takes the screen at boot.
 #
-# This package ships the *runtime*. The browser binary is expected to be
-# built already, because compiling Chromium is a multi-hour job that should
-# not happen on a user's machine during a package upgrade.
+# This package ships the *runtime*. Firefox itself is NOT built here: whether
+# it comes from the distribution's own firefox package or from a tree you
+# built yourself with firefox/fetch.sh is the operator's choice, and a package
+# upgrade must never trigger a multi-hour compile.
 #
-# Build the browser first:
+# To ship your own stripped build instead of the distro package:
 #     git clone https://github.com/Pratech1015/Bootowser
-#     cd Bootowser/browser && ./fetch.sh && ./build.sh
+#     cd Bootowser/firefox && ./fetch.sh --dest /mnt/fast/ff
+#     cp mozconfig-bootowser /mnt/fast/ff/.mozconfig
+#     cd /mnt/fast/ff && ./mach bootstrap && ./mach build
 #
 # then point this build at the result:
-#     BOOTOWSER_BROWSER=$PWD/../out/Release/chrome makepkg -s
+#     BOOTOWSER_FIREFOX=/mnt/fast/ff/obj-bootowser/dist/bin/firefox makepkg -s
+#
+# Leave BOOTOWSER_FIREFOX unset to use the distribution's Firefox, which is
+# what most deployments want.
 
 pkgname=bootowser
 pkgver=0.1.0
 pkgrel=1
-pkgdesc="Stripped Chromium kiosk browser that takes the screen at boot"
+pkgdesc="Locked-down Firefox kiosk that takes the screen at boot"
 arch=('x86_64')
 url="https://github.com/Pratech1015/Bootowser"
 license=('GPL3')
-depends=('systemd-libs' 'xorg-server')
+depends=('systemd-libs' 'xorg-server' 'firefox' 'sudo')
 optdepends=('xorg-xset: display blanking' 'mesa: hardware acceleration')
 source=("$pkgname-$pkgver.tar.gz")
 sha256sums=('SKIP')
 
-# Where the prebuilt browser lives. Overridable from the environment.
-: "${BOOTOWSER_BROWSER:=out/Release/chrome}"
 _root="$srcdir/$pkgname-$pkgver"
 pkgver() {
   cd "$_root" || exit 1
@@ -36,12 +40,25 @@ pkgver() {
 build() {
   cd "$_root" || exit 1
 
-  local browser="$BOOTOWSER_BROWSER"
-  [ -x "$browser" ] || browser="$_root/$BOOTOWSER_BROWSER"
-  if [ ! -x "$browser" ]; then
-    error "no Bootowser browser binary at '$browser'"
-    echo "Build it with:  cd browser && ./fetch.sh && ./build.sh" >&2
-    return 1
+  # Firefox is a directory, not a binary. Only the executable is useless.
+  local ffdir=""
+  if [ -n "${BOOTOWSER_FIREFOX:-}" ]; then
+    # An explicitly requested tree that is not usable is an error, never a
+    # silent fall back to the system browser.
+    if [ ! -x "${BOOTOWSER_FIREFOX}" ]; then
+      error "BOOTOWSER_FIREFOX=${BOOTOWSER_FIREFOX} is not executable"
+    fi
+    ffdir="$(dirname "$(readlink -f "${BOOTOWSER_FIREFOX}")")"
+    if [ ! -e "$ffdir/omni.ja" ] && [ ! -e "$ffdir/libxul.so" ]; then
+      error "'${BOOTOWSER_FIREFOX}' does not look like a Firefox install dir"
+      echo "Point BOOTOWSER_FIREFOX at .../dist/bin/firefox, not at libxul.so" >&2
+      return 1
+    fi
+  else
+    local c
+    for c in /usr/lib/firefox/firefox /usr/lib64/firefox/firefox /usr/bin/firefox; do
+      if [ -x "$c" ]; then ffdir="$(dirname "$c")"; break; fi
+    done
   fi
 
   local dest="$pkgdir"
@@ -53,30 +70,58 @@ build() {
                  "$dest/usr/lib/systemd/system/bootowser.service"
   install -Dm644 runtime/lib/systemd/system/bootowser-xserver.service \
                  "$dest/usr/lib/systemd/system/bootowser-xserver.service"
+  install -Dm644 runtime/lib/systemd/system/bootowser-control.service \
+                 "$dest/usr/lib/systemd/system/bootowser-control.service"
 
   install -Dm644 runtime/etc/bootowser/bootowser.conf \
                  "$dest/etc/bootowser/bootowser.conf"
-  install -Dm644 runtime/etc/bootowser/policies/managed/bootowser.json \
-                 "$dest/etc/bootowser/policies/managed/bootowser.json"
+  install -Dm644 runtime/etc/bootowser/control.conf \
+                 "$dest/etc/bootowser/control.conf"
 
-  # The browser plus the runtime data it cannot start without: without the
-  # .pak files and icudtl.dat Chromium starts and then renders nothing.
-  install -Dm755 "$browser" "$dest/usr/lib/bootowser/chrome"
-  local bdir; bdir="$(dirname "$(readlink -f "$browser")")"
-  local extra
-  if [ -f "$bdir/icudtl.dat" ]; then
-    install -Dm644 "$bdir/icudtl.dat" "$dest/usr/lib/bootowser/icudtl.dat"
-  fi
-  shopt -s nullglob
-  for extra in "$bdir"/*.pak "$bdir"/*.bin; do
-    install -Dm644 "$extra" "$dest/usr/lib/bootowser/$(basename "$extra")"
+  # Control sidecar: sudoers rule for root hooks (validated in check()) and
+  # the root-owned scripts it may escalate to. The rule names /usr/lib/
+  # bootowser/commands, so both must live at exactly that path.
+  install -Dm440 runtime/lib/sudoers.d/bootowser \
+                 "$dest/etc/sudoers.d/bootowser"
+  install -d "$dest/usr/lib/bootowser/commands"
+  for f in runtime/lib/bootowser/commands/*.sh; do
+    install -Dm755 "$f" "$dest/usr/lib/bootowser/commands/${f##*/}"
   done
-  shopt -u nullglob
-  for extra in locales swiftshader; do
-    [ -d "$bdir/$extra" ] && cp -a "$bdir/$extra" "$dest/usr/lib/bootowser/"
-  done
-  if [ -f "$bdir/chrome_sandbox" ]; then
-    install -Dm4755 "$bdir/chrome_sandbox" "$dest/usr/lib/bootowser/chrome_sandbox"
+
+  if [ -n "$ffdir" ]; then
+    # If ffdir were ever empty, `cp -a "$ffdir"/.` is `cp -a "/."` and would
+    # copy the entire root filesystem into the package directory. Refuse.
+    case "$ffdir" in
+      /) error "refusing to copy from '/'" ;;
+    esac
+    [ -x "$ffdir/firefox" ] || error "$ffdir/firefox is not executable"
+    # Bundle the tree so the kiosk does not depend on another package's
+    # files staying up across upgrades.
+    install -d "$dest/usr/lib/bootowser/firefox"
+    cp -a "$ffdir"/. "$dest/usr/lib/bootowser/firefox/"
+
+    # The control sidecar from the same tree. A tree staged before the
+    # feature has no binary; the unit's ConditionPathExists then keeps the
+    # API off instead of failing the package. makepkg packages whatever is
+    # in $pkgdir, so no file list needs to change.
+    if [ -x "$ffdir/bootowser-control" ]; then
+      install -Dm755 "$ffdir/bootowser-control" \
+                     "$dest/usr/lib/bootowser/bootowser-control"
+    else
+      echo "warning: tree has no bootowser-control; shipping without the control API" >&2
+    fi
+
+    # Firefox reads managed policy from <install dir>/distribution/policies.json,
+    # which is the bundled tree here. Shipping it anywhere else means the kiosk
+    # runs unlocked, so it goes inside the tree.
+    install -Dm644 runtime/etc/bootowser/policies/managed/policies.json \
+                   "$dest/usr/lib/bootowser/firefox/distribution/policies.json"
+  else
+    # No Firefox tree to bundle: the launcher falls back to the distribution's
+    # Firefox. Keep the policy alongside it for reference, since a package must
+    # not write into another package's tree.
+    install -Dm644 runtime/etc/bootowser/policies/managed/policies.json \
+                   "$dest/usr/share/bootowser/distribution/policies.json"
   fi
 
   install -Dm644 LICENSE "$dest/usr/share/licenses/$pkgname/LICENSE"
@@ -91,13 +136,39 @@ d /var/lib/bootowser 0700 bootowser bootowser - -
 EOF
 }
 
+check() {
+  cd "$_root" || exit 1
+
+  # A broken sudoers fragment means root hooks silently never work; catch it
+  # before the package ships. visudo comes in with the sudo dependency.
+  if command -v visudo >/dev/null 2>&1; then
+    local staged="$pkgdir/etc/sudoers.d/bootowser"
+    if [ -f "$staged" ]; then
+      visudo -cf "$staged" >/dev/null || {
+        echo "error: $staged fails sudoers validation" >&2
+        return 1
+      }
+    fi
+  fi
+
+  bash -n runtime/lib/bootowser/commands/*.sh
+}
+
 package() {
   cd "$pkgdir" || exit 1
 
-  # Chromium's SUID sandbox must stay root-owned and setuid.
-  chown -R root:root usr
-  chmod 4755 usr/lib/bootowser/chrome_sandbox 2>/dev/null || true
-  chmod 0644 etc/bootowser/bootowser.conf etc/bootowser/policies/managed/bootowser.json
+  chown -R root:root usr etc
+  chmod 0755 usr/lib/bootowser/firefox 2>/dev/null || true
+  chmod 0644 etc/bootowser/bootowser.conf
+  # Pin it: sudo refuses a world-writable fragment no matter which package
+  # manager laid it down.
+  chmod 0440 etc/sudoers.d/bootowser
+  chmod 0644 usr/lib/bootowser/firefox/distribution/policies.json 2>/dev/null || true
+  chmod 0644 usr/share/bootowser/distribution/policies.json 2>/dev/null || true
+
+  # Firefox's content sandbox is namespaces-based and needs no setuid helper,
+  # unlike Chromium's chrome_sandbox. The tree is root-owned and not writable
+  # by the kiosk user, which is what the sandbox needs to hold.
 
   # Expand the %i/%n specifiers by hand: makepkg does not run systemd macros.
   for unit in usr/lib/systemd/system/bootowser*.service; do

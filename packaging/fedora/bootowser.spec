@@ -3,7 +3,7 @@
 Name:           bootowser
 Version:        0.1.0
 Release:        1%{?dist}
-Summary:        Stripped Chromium kiosk browser that takes the screen at boot
+Summary:        Locked-down Firefox kiosk that takes the screen at boot
 
 License:        GPL-3.0-or-later
 URL:            https://github.com/Pratech1015/Bootowser
@@ -12,14 +12,16 @@ Source0:        %{name}-%{version}.tar.gz
 BuildRequires:  systemd-devel
 Requires:       systemd-libs
 Requires:       xorg-server
+Requires:       firefox
+Requires:       sudo
 Recommends:     xorg-x11-utils
 Suggests:       mesa-dri-drivers
 
 %description
-Bootowser replaces the boot splash with a real web browser. It is a
-stripped-down Chromium build -- no tabs, no omnibox, no settings, no
-extensions, no telemetry -- that starts automatically at boot and shows a
-single fullscreen page.
+Bootowser takes over the screen at boot with a real web browser. It runs
+Firefox in its built-in kiosk mode, so no tabs, no address bar, no context
+menu and no user interface, under a managed policy that disables telemetry,
+accounts, updates and developer tools.
 
 It is aimed at single-purpose devices: signage, information kiosks, menu
 boards and TV-style displays where a full desktop environment is more than
@@ -32,41 +34,56 @@ BuildArch:      noarch
 %description systemd
 The systemd units that start the display server and the kiosk browser at boot.
 
-# The browser binary is a separately built Chromium; see the browser/ directory
-# in the upstream repository. Fail loudly rather than shipping a package with
-# no browser in it.
-%global browserbin %{_libdir}/bootowser/chrome
+# The browser is a directory, not a binary. Bundle a tree so the kiosk does not
+# depend on another package's layout, but fall back to the system install when
+# the operator has not staged one.
+%global browserdir %{_libdir}/bootowser/bootowser
 
 %prep
 %autosetup
 
 %build
-browser="$(find "%{_sourcedir}" -maxdepth 4 -type f -path '*/out/*/chrome' -perm -u+x | head -n1)"
-if [ -z "$browser" ]; then
-  browser="$(find "%{_sourcedir}" -maxdepth 4 -type f -name chrome -perm -u+x | head -n1)"
-fi
-if [ -z "$browser" ]; then
-  # Allow an externally built binary too.
-  if [ -n "$BOOTOWSER_BROWSER" ] && [ -x "$BOOTOWSER_BROWSER" ]; then
-    browser="$BOOTOWSER_BROWSER"
+# Find a browser install tree: $BOOTOWSER_FIREFOX wins, then a tree staged in
+# the source tarball, then the distribution's own firefox package.
+# An explicitly requested tree that is not usable is an error, never a silent
+# fall back to the system browser: quietly shipping a different browser than
+# the operator asked for is worse than failing.
+ffdir=""
+if [ -n "${BOOTOWSER_FIREFOX:-}" ]; then
+  if [ ! -x "${BOOTOWSER_FIREFOX}" ]; then
+    echo "error: BOOTOWSER_FIREFOX=${BOOTOWSER_FIREFOX} is not executable" >&2
+    exit 1
   fi
+  ffdir="$(dirname "$(readlink -f "${BOOTOWSER_FIREFOX}")")"
+elif [ -x "%{_sourcedir}/firefox-tree/bootowser" ] \
+  || [ -x "%{_sourcedir}/firefox-tree/firefox" ]; then
+  ffdir="%{_sourcedir}/firefox-tree"
 fi
-if [ -z "$browser" ]; then
-  echo "error: no Bootowser browser binary found in the source tree" >&2
-  echo "       Build it first:  cd browser && ./fetch.sh && ./build.sh" >&2
+if [ -z "$ffdir" ]; then
+  for c in %{browserdir}/bootowser /usr/lib64/firefox/firefox \
+           /usr/lib/firefox/firefox /usr/bin/firefox; do
+    if [ -x "$c" ]; then ffdir="$(dirname "$c")"; break; fi
+  done
+fi
+if [ -z "$ffdir" ]; then
+  echo "error: no browser installation found" >&2
+  echo "       install a Bootowser tree, or set BOOTOWSER_FIREFOX to one" >&2
   exit 1
 fi
-echo "using browser binary: $browser"
-
-bdir="$(dirname "$(readlink -f "$browser")")"
+# A bare libxul.so is not a browser directory; catch that mistake early.
+if [ ! -e "$ffdir/omni.ja" ] && [ ! -e "$ffdir/libxul.so" ]; then
+  echo "error: $ffdir does not look like a Firefox install directory" >&2
+  exit 1
+fi
+echo "using Firefox tree: $ffdir"
 
 %install
 rm -rf %{buildroot}
 mkdir -p %{buildroot}%{_prefix}/lib/bootowser
 mkdir -p %{buildroot}%{_datadir}/bootowser
-mkdir -p %{buildroot}%{_sysconfdir}/bootowser/policies/managed
 mkdir -p %{buildroot}%{_docdir}/bootowser
 mkdir -p %{buildroot}%{_unitdir}
+mkdir -p %{buildroot}%{_sysconfdir}/sudoers.d
 mkdir -p %{buildroot}%{_localstatedir}/lib/bootowser/profile
 
 install -p -m 0755 runtime/bin/bootowser          %{buildroot}%{_prefix}/lib/bootowser/bootowser
@@ -75,24 +92,64 @@ install -p -m 0644 runtime/xorg/xorg.conf         %{buildroot}%{_datadir}/bootow
 
 install -p -m 0644 runtime/lib/systemd/system/bootowser.service          %{buildroot}%{_unitdir}/bootowser.service
 install -p -m 0644 runtime/lib/systemd/system/bootowser-xserver.service %{buildroot}%{_unitdir}/bootowser-xserver.service
+install -p -m 0644 runtime/lib/systemd/system/bootowser-control.service %{buildroot}%{_unitdir}/bootowser-control.service
 
 install -p -m 0644 runtime/etc/bootowser/bootowser.conf \
                  %{buildroot}%{_sysconfdir}/bootowser/bootowser.conf
-install -p -m 0644 runtime/etc/bootowser/policies/managed/bootowser.json \
-                 %{buildroot}%{_sysconfdir}/bootowser/policies/managed/bootowser.json
+install -p -m 0644 runtime/etc/bootowser/control.conf \
+                 %{buildroot}%{_sysconfdir}/bootowser/control.conf
+install -p -m 0644 runtime/etc/bootowser/policies/managed/policies.json \
+                 %{buildroot}%{_sysconfdir}/bootowser/distribution/policies.json
 
-# The browser plus the data it cannot start without.
-install -p -m 0755 "$browser" %{buildroot}%{_prefix}/lib/bootowser/chrome
-[ -f "$bdir/icudtl.dat" ] && install -p -m 0644 "$bdir/icudtl.dat" %{buildroot}%{_prefix}/lib/bootowser/
-for f in "$bdir"/*.pak "$bdir"/*.bin; do
-  [ -f "$f" ] && install -p -m 0644 "$f" %{buildroot}%{_prefix}/lib/bootowser/
+# Control sidecar root hooks: sudo refuses group/world-writable fragments,
+# and the rule names exactly this directory.
+install -p -m 0440 runtime/lib/sudoers.d/bootowser \
+                 %{buildroot}%{_sysconfdir}/sudoers.d/bootowser
+install -d -m 0755 %{buildroot}%{_prefix}/lib/bootowser/commands
+for f in runtime/lib/bootowser/commands/*.sh; do
+  install -p -m 0755 "$f" \
+    "%{buildroot}%{_prefix}/lib/bootowser/commands/${f##*/}"
 done
-for d in locales swiftshader; do
-  [ -d "$bdir/$d" ] && cp -a "$bdir/$d" %{buildroot}%{_prefix}/lib/bootowser/
+
+# The whole Firefox tree, not just the executable: without omni.ja and the
+# shared libraries the browser starts and renders nothing.
+#
+# The guard matters: if ffdir ever ends up empty, `cp -a "$ffdir"/.` is
+# `cp -a "/."` and copies the entire root filesystem into the buildroot.
+case "$ffdir" in
+  ""|/) echo "error: refusing to copy from '$ffdir'" >&2; exit 1 ;;
+esac
+# The renamed build ships bootowser; accept the stock name so a tree staged
+# before the rebrand still packages. Written as a plain if rather than
+# `[ -x .. ] && break`, which would trip `set -e` on the first miss.
+exe=""
+for cand in bootowser firefox; do
+  if [ -x "$ffdir/$cand" ]; then exe="$cand"; break; fi
 done
-if [ -f "$bdir/chrome_sandbox" ]; then
-  install -p -m 4755 "$bdir/chrome_sandbox" %{buildroot}%{_prefix}/lib/bootowser/chrome_sandbox
+[ -n "$exe" ] || { echo "error: no executable bootowser or firefox in $ffdir" >&2; exit 1; }
+echo "bundling browser tree from $ffdir ($exe)"
+mkdir -p %{buildroot}%{browserdir}
+cp -a "$ffdir"/. %{buildroot}%{browserdir}/
+
+# The control sidecar ships only when the staged tree has it: a system
+# firefox fallback or a pre-feature tree has none, and %files must not name
+# a file that is not there. The conditional entry goes into a generated
+# filelist that %files picks up with -f (always created, possibly empty).
+extra_files="%{_builddir}/%{name}-%{version}-extra.files"
+: > "$extra_files"
+if [ -x "$ffdir/bootowser-control" ]; then
+  install -p -m 0755 "$ffdir/bootowser-control" \
+                 "%{buildroot}%{_prefix}/lib/bootowser/bootowser-control"
+  echo "%{_prefix}/lib/bootowser/bootowser-control" >> "$extra_files"
+else
+  echo "warning: tree has no bootowser-control; shipping without the control API" >&2
 fi
+
+# Gecko reads managed policy from <install dir>/distribution/policies.json,
+# so the policy has to sit inside the bundled tree; anywhere else and the kiosk
+# starts with no policy applied at all.
+install -p -m 0644 runtime/etc/bootowser/policies/managed/policies.json \
+                 %{buildroot}%{browserdir}/distribution/policies.json
 
 install -p -m 0644 LICENSE  %{buildroot}%{_docdir}/bootowser/COPYING
 install -p -m 0644 README.md %{buildroot}%{_docdir}/bootowser/README.md
@@ -108,36 +165,39 @@ usermod -a -G video,render bootowser >/dev/null 2>&1 || :
 %post systemd
 %systemd_post bootowser-xserver.service
 %systemd_post bootowser.service
+%systemd_post bootowser-control.service
 
 %preun systemd
 %systemd_preun bootowser-xserver.service
 %systemd_preun bootowser.service
+%systemd_preun bootowser-control.service
 
 %postun systemd
 %systemd_postun_with_restart bootowser.service
+%systemd_postun_with_restart bootowser-control.service
 
-%files
+%files -f %{_builddir}/%{name}-%{version}-extra.files
 %license LICENSE
 %doc %{_docdir}/bootowser/README.md
 %doc %{_docdir}/bootowser/security.md
 %{_prefix}/lib/bootowser/bootowser
 %{_prefix}/lib/bootowser/bootowser-xsession
-%{_prefix}/lib/bootowser/chrome
-%{_prefix}/lib/bootowser/chrome_sandbox
-%{_prefix}/lib/bootowser/*.pak
-%{_prefix}/lib/bootowser/*.bin
-%{_prefix}/lib/bootowser/icudtl.dat
+%dir %{_prefix}/lib/bootowser/commands
+%{_prefix}/lib/bootowser/commands/*.sh
 %{_datadir}/bootowser/xorg.conf
 %config(noreplace) %{_sysconfdir}/bootowser/bootowser.conf
-%config(noreplace) %{_sysconfdir}/bootowser/policies/managed/bootowser.json
+%config(noreplace) %{_sysconfdir}/bootowser/control.conf
+%config(noreplace) %{_sysconfdir}/bootowser/distribution/policies.json
+%attr(0440,root,root) %{_sysconfdir}/sudoers.d/bootowser
 %attr(0700,bootowser,bootowser) %dir %{_localstatedir}/lib/bootowser/profile
 
 %files systemd
 %{_unitdir}/bootowser.service
 %{_unitdir}/bootowser-xserver.service
+%{_unitdir}/bootowser-control.service
 
 %changelog
 * Wed Sep 30 2026 Pratech1015 <pragyan.krish3@gmail.com> - 0.1.0-1
-- Initial release: stripped Chromium kiosk browser runtime, systemd units,
-  minimal X server configuration. No boot splash is shipped; the browser
-  waits for the system's existing Plymouth theme to finish.
+- Initial release: Firefox kiosk runtime, systemd units, minimal X server
+  configuration, managed policy lockdown. No boot splash is shipped; the
+  browser waits for the system's existing Plymouth theme to finish.
