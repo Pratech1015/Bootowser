@@ -10,6 +10,129 @@ permissions:
   contents: read
 
 jobs:
+  patches:
+    name: firefox patch series
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: every patch in the series exists and is listed in order
+        run: |
+          set -euo pipefail
+          series=firefox/patches/series
+          [ -s "$series" ] || { echo "::error::$series is empty"; exit 1; }
+          n=0
+          # `|| [ -n "$p" ]` so a series file with no trailing newline does not
+          # silently drop its last patch.
+          while read -r p || [ -n "$p" ]; do
+            case "$p" in ''|\#*) continue ;; esac
+            n=$((n + 1))
+            # Compare the bare filename: `series` lists patch names, not paths.
+            want=$(printf '%04d-' "$n")
+            case "$p" in
+              "$want"*) ;;
+              *) echo "::error::series entry '$p' does not match prefix '$want'"
+                 echo "         (patches must be numbered so they apply in order)"
+                 exit 1 ;;
+            esac
+            [ -f "firefox/patches/$p" ] || {
+              echo "::error::series references missing patch: $p"; exit 1; }
+            echo "ok: $p"
+          done < "$series"
+          echo "$n patch(es) checked"
+
+      - name: patches apply cleanly to the pinned Firefox
+        env:
+          FIREFOX_VERSION: FIREFOX_156_0_1_RELEASE
+        run: |
+          set -euo pipefail
+          pinned=$(grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' \
+                   firefox/FIREFOX_VERSION | head -n1 | tr -d '[:space:]')
+          [ "$pinned" = "$FIREFOX_VERSION" ] || {
+            echo "::error::FIREFOX_VERSION is '$pinned' but this job expects $FIREFOX_VERSION"
+            echo "         update FIREFOX_VERSION in this workflow when bumping the release"
+            exit 1
+          }
+
+          # Shallow, tag-only clone: enough to apply a patch series, and it
+          # avoids the ~20 GB a full Firefox history would cost CI.
+          echo "::group::clone firefox $pinned"
+          git clone --filter=blob:none --no-checkout --depth 1 \
+            --branch "$pinned" https://github.com/mozilla-firefox/firefox.git \
+            firefox-src
+          echo "::endgroup::"
+
+          ./firefox/apply-patches.sh --src-dir firefox-src --check
+
+      - name: the series must actually carry the lockdown
+        run: |
+          set -euo pipefail
+          # A patch series that stopped containing the lockdown would still
+          # apply cleanly, so assert on the content, not just on the apply.
+          grep -q -- '--enable-bootowser' firefox/patches/*.patch || {
+            echo "::error::no patch defines --enable-bootowser"; exit 1; }
+          grep -q 'CheckBootowserNavigation' firefox/patches/*.patch || {
+            echo "::error::no patch enforces the navigation allowlist"; exit 1; }
+          grep -q 'bootowser.build' firefox/patches/*.patch || {
+            echo "::error::no patch gates on the bootowser.build static pref"; exit 1; }
+          # The allow-list must keep the schemes Firefox loads into its own
+          # top-level window. Dropping any of these does not fail to compile or
+          # fail to apply -- it produces a browser that cannot draw its own UI,
+          # cannot open a new tab, or cannot render a PDF. Only a launch catches
+          # it, so assert on the list here.
+          for scheme in chrome about:newtab about:home moz-extension; do
+            grep -qF "$scheme" firefox/patches/0001-*.patch || {
+              echo "::error::patch 0001 no longer allows '$scheme'"
+              echo "         the built browser will fail to paint its own UI"
+              exit 1; }
+          done
+          # The rebrand. Same reasoning: dropping these changes nothing about
+          # whether the series applies, and the result is a binary that is
+          # called firefox and titled Firefox.
+          grep -q -- '--with-app-name=bootowser' firefox/mozconfig-bootowser || {
+            echo "::error::mozconfig does not rename the executable"
+            exit 1; }
+          grep -q 'imply_option("MOZ_APP_VENDOR", "Bootowser")' firefox/patches/0003-*.patch || {
+            echo "::error::patch 0003 no longer sets MOZ_APP_VENDOR"
+            exit 1; }
+          grep -q 'imply_option("MOZ_APP_PROFILE", "bootowser")' firefox/patches/0003-*.patch || {
+            echo "::error::patch 0003 no longer sets MOZ_APP_PROFILE"
+            exit 1; }
+          grep -q 'MOZ_APP_DISPLAYNAME=Bootowser' firefox/patches/0003-*.patch || {
+            echo "::error::patch 0003 no longer renames the display name"
+            exit 1; }
+          # The User Agent must stay Firefox. This one is a guard *against* a
+          # rename that looks thorough: MOZ_APP_UA_NAME defaults to empty, which
+          # makes the UA fall back to application.ini's Name, so "fixing" it to
+          # Bootowser would serve every page bootowser/<version> and get the
+          # kiosk treated as a bot.
+          grep -q 'imply_option("MOZ_APP_UA_NAME", "Firefox")' firefox/patches/0003-*.patch || {
+            echo "::error::patch 0003 no longer pins MOZ_APP_UA_NAME to Firefox"
+            echo "         an empty value falls back to Name and changes the UA"
+            exit 1; }
+          # The launcher must not quietly run a distro browser: it has none of
+          # the patches above, so the allow-list and the escape hatches go away.
+          grep -q 'ALLOW_SYSTEM_BROWSER' runtime/bin/bootowser || {
+            echo "::error::launcher no longer gates the system-browser fallback"
+            exit 1
+          }
+          # The control sidecar. Same reasoning as above: a series that no
+          # longer builds it still applies cleanly and still compiles, so the
+          # assertions have to be on the content.
+          grep -q 'GeckoProgram("bootowser-control"' firefox/patches/0006-*.patch || {
+            echo "::error::patch 0006 no longer builds bootowser-control"
+            exit 1; }
+          grep -q 'toolkit/moz.build' firefox/patches/0006-*.patch || {
+            echo "::error::patch 0006 no longer hooks toolkit/moz.build"
+            exit 1; }
+          grep -q '/v1/exec' firefox/patches/0006-*.patch || {
+            echo "::error::patch 0006 no longer serves the /v1/exec endpoint"
+            exit 1; }
+          grep -q 'bootowser-control.service' runtime/lib/systemd/system/bootowser.service || {
+            echo "::error::bootowser.service no longer pulls in the control sidecar"
+            exit 1; }
+          echo "lockdown and identity present in the series"
+
   shell:
     name: shell scripts
     runs-on: ubuntu-latest
@@ -24,7 +147,8 @@ jobs:
       - name: syntax check
         run: |
           set -euo pipefail
-          for f in browser/*.sh tools/*.sh runtime/bin/*; do
+          for f in firefox/*.sh tools/*.sh runtime/bin/* \
+                   runtime/lib/bootowser/commands/*.sh; do
             echo "::group::bash -n $f"
             bash -n "$f"
             echo "::endgroup::"
@@ -35,9 +159,21 @@ jobs:
       - name: shellcheck
         run: |
           set -euo pipefail
-          shellcheck -s bash -S warning browser/*.sh tools/*.sh runtime/bin/*
+          shellcheck -s bash -S warning firefox/*.sh tools/*.sh runtime/bin/*
+          shellcheck -s sh -S warning runtime/lib/bootowser/commands/*.sh
           # PKGBUILD: pkgdir/srcdir/depends etc. are injected by makepkg.
           shellcheck -s bash -S warning -e SC2034,SC2154 packaging/arch/PKGBUILD
+
+      - name: sudoers fragment parses
+        run: |
+          set -euo pipefail
+          # A fragment that does not parse is a root hook path that fails
+          # exactly when it is needed. Run visudo as the checkout user: as
+          # root it would also police ownership, and a git checkout is never
+          # owned by root.
+          visudo="$(command -v visudo || echo /usr/sbin/visudo)"
+          "$visudo" -cf runtime/lib/sudoers.d/bootowser
+          echo "sudoers fragment OK"
 
   config:
     name: configuration files
@@ -50,16 +186,143 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           import json, sys
-          path = "runtime/etc/bootowser/policies/managed/bootowser.json"
+          from pathlib import Path
+          path = "runtime/etc/bootowser/policies/managed/policies.json"
           with open(path) as fh:
               data = json.load(fh)
-          # Chromium rejects unknown members that are not valid policies, so a
-          # key starting with '_' would silently break the whole file.
-          bad = [k for k in data if k.startswith("_")]
-          if bad:
-              sys.exit(f"policy file has non-policy keys: {bad}")
-          print(f"ok: {len(data)} managed policies, all real")
+          # Firefox ignores unknown members silently, so a typo in a policy
+          # name is a hole in the lockdown that nothing reports. The name list
+          # is vendored so this check never depends on the network.
+          path = Path("tools/firefox-policy-names.txt")
+          known = {ln.strip() for ln in path.read_text().splitlines()
+                   if ln.strip() and not ln.startswith("#")}
+          bogus = sorted(set(pols) - known)
+          if bogus:
+              sys.exit(f"not real Firefox policies: {bogus}")
+          if not path.is_file() or not known:
+              sys.exit("vendored policy name list is missing or empty")
+          print(f"ok: {len(pols)} policies")
           PY
+
+      - name: every policy name is a real Firefox policy
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, re, sys, urllib.request
+          url = ("https://raw.githubusercontent.com/mozilla/policy-templates/"
+                 "main/README.md")
+          known = set(re.findall(r"^\| \*\*\[`([A-Za-z0-9]+)`\]",
+                                 urllib.request.urlopen(url, timeout=20)
+                                 .read().decode(), re.M))
+          if len(known) < 50:
+              sys.exit(f"policy list looks truncated ({len(known)} names); not checking")
+          pols = json.load(open(
+              "runtime/etc/bootowser/policies/managed/policies.json"))["policies"]
+          bogus = sorted(set(pols) - known)
+          if bogus:
+              sys.exit(f"not real Firefox policies: {bogus}")
+          print(f"ok: all {len(pols)} policies exist upstream")
+          PY
+
+      - name: every Preferences entry is a prefix Firefox will accept
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, sys
+          # Mirrors the allowedPrefixes / allowedSecurityPrefs / blockedPrefs
+          # tables in browser/components/enterprisepolicies/Policies.sys.mjs.
+          # A preference outside these is dropped with only a console error,
+          # so it looks applied in the policy but is not enforced.
+          allowed = [
+              "accessibility.", "alerts.", "app.update.", "browser.",
+              "datareporting.policy.", "devtools.", "dom.", "extensions.",
+              "general.autoScroll", "general.smoothScroll", "geo.", "gfx.",
+              "identity.fxaccounts.toolbar.", "intl.", "keyword.enabled",
+              "layers.", "layout.", "mathml.disabled", "media.", "network.",
+              "pdfjs.", "places.", "pref.", "print.",
+              "privacy.baselineFingerprintingProtection",
+              "privacy.fingerprintingProtection",
+              "privacy.globalprivacycontrol.enabled",
+              "privacy.userContext.enabled", "privacy.userContext.ui.enabled",
+              "sidebar.", "signon.", "spellchecker.",
+              "svg.context-properties.content.enabled", "svg.disabled",
+              "toolkit.legacyUserProfileCustomizations.stylesheets",
+              "ui.", "webgl.disabled", "webgl.force-enabled", "widget.",
+              "xpinstall.enabled", "xpinstall.whitelist.required",
+          ]
+          blocked = {
+              "app.update.channel", "app.update.lastUpdateTime",
+              "app.update.migrated", "browser.vpn_promo.disallowed_regions",
+          }
+          prefs = json.load(open(
+              "runtime/etc/bootowser/policies/managed/policies.json"
+          ))["policies"].get("Preferences", {})
+          rejected = sorted(
+              k for k in prefs
+              if k in blocked or not any(k.startswith(p) for p in allowed)
+          )
+          if rejected:
+              sys.exit(f"preferences Firefox will silently ignore: {rejected}")
+          print(f"ok: all {len(prefs)} preferences are honoured by Firefox")
+          PY
+
+      - name: the policy file is marked as Bootowser-managed
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, sys
+          d = json.load(open(
+              "runtime/etc/bootowser/policies/managed/policies.json"))
+          # runtime/bin/bootowser greps for this marker before exec so that a
+          # stale or foreign policy at the path which wins resolution cannot
+          # leave the kiosk running unlocked.
+          if d.get("BootowserManaged") is not True:
+              sys.exit("policies.json is missing the BootowserManaged marker")
+          print("ok: policy is marked BootowserManaged")
+          PY
+
+      - name: LNA checks are locked off for the local control API
+        run: |
+          set -euo pipefail
+          # Firefox 156 gates http://127.0.0.1 fetches from https pages
+          # behind Network Checks (Local Network Access). Left on, the kiosk
+          # page's calls to the control sidecar are refused by the browser
+          # and it looks like the API is broken. The sidecar cannot switch
+          # this off itself: prefs must be locked by policy.
+          python3 - <<'PY'
+          import json, sys
+          prefs = json.load(open(
+              "runtime/etc/bootowser/policies/managed/policies.json"
+          ))["policies"]["Preferences"]
+          for key in ("network.lna.enabled", "network.lna.blocking"):
+              p = prefs.get(key)
+              if not p or p.get("Value") is not False \
+                      or p.get("Status") != "locked":
+                  sys.exit(f"{key} must be locked to false, got: {p}")
+          print("ok: LNA checks locked off by policy")
+          PY
+
+      - name: control.conf keys are all read by the sidecar
+        run: |
+          set -euo pipefail
+          # A key in control.conf that the sidecar never reads is a setting
+          # the operator believes in and that silently does nothing. The
+          # names appear as quoted getenv() arguments in patch 0006.
+          keys=$(grep -oE '^[A-Z][A-Z0-9_]*=' runtime/etc/bootowser/control.conf \
+                 | tr -d '=' | sort -u)
+          used=$(grep -hoE '(getenv|GetEnvInt|GetEnvBool)\("[A-Z0-9_]+" \
+                 firefox/patches/0006-*.patch \
+                 | sed -E 's/^[a-zA-Z_]+\("//; s/"$//' | sort -u)
+          fail=0
+          while read -r k; do
+            [ -n "$k" ] || continue
+            if ! grep -qx "$k" <<<"$used"; then
+              echo "::error file=runtime/etc/bootowser/control.conf::$k is never read by bootowser-control"
+              fail=1
+            fi
+          done <<<"$keys"
+          [ "$fail" -eq 0 ] && echo "all $(grep -c . <<<"$keys") control keys are read"
+          exit "$fail"
 
       - name: config parses and every key is consumed by the launchers
         run: |
@@ -88,21 +351,34 @@ jobs:
           set -euo pipefail
           # systemd-analyze verify fails if ExecStart does not exist, so lay
           # the runtime down the way install.sh does before checking. The
-          # browser binary itself is not needed for a syntax check.
+          # browser binary itself is not needed for a syntax check, and the
+          # control sidecar stub only has to exist for ExecStart and
+          # ConditionPathExists to resolve.
           sudo install -d -m 0755 /usr/lib/bootowser /usr/share/bootowser \
                                /usr/lib/systemd/system /etc/bootowser/policies/managed
           sudo install -m 0755 runtime/bin/bootowser          /usr/lib/bootowser/bootowser
           sudo install -m 0755 runtime/bin/bootowser-xsession /usr/lib/bootowser/bootowser-xsession
+          sudo install -m 0755 /bin/true                      /usr/lib/bootowser/bootowser-control
           sudo install -m 0644 runtime/xorg/xorg.conf         /usr/share/bootowser/xorg.conf
           sudo install -m 0644 runtime/etc/bootowser/bootowser.conf /etc/bootowser/bootowser.conf
-          sudo install -m 0644 runtime/etc/bootowser/policies/managed/bootowser.json \
+          sudo install -m 0644 runtime/etc/bootowser/control.conf   /etc/bootowser/control.conf
+          sudo install -m 0644 runtime/etc/bootowser/policies/managed/policies.json \
                            /etc/bootowser/policies/managed/bootowser.json
           sudo install -m 0644 runtime/lib/systemd/system/bootowser.service \
                            /usr/lib/systemd/system/bootowser.service
           sudo install -m 0644 runtime/lib/systemd/system/bootowser-xserver.service \
                            /usr/lib/systemd/system/bootowser-xserver.service
+          sudo install -m 0644 runtime/lib/systemd/system/bootowser-control.service \
+                           /usr/lib/systemd/system/bootowser-control.service
           systemd-analyze verify /usr/lib/systemd/system/bootowser.service \
-                                  /usr/lib/systemd/system/bootowser-xserver.service
+                                  /usr/lib/systemd/system/bootowser-xserver.service \
+                                  /usr/lib/systemd/system/bootowser-control.service
+          # bootowser.service must keep pulling the sidecar in: without
+          # Wants=/After= the page loads before the API is listening.
+          grep -q '^Wants=bootowser-control.service' \
+               /usr/lib/systemd/system/bootowser.service
+          grep -q '^After=bootowser-control.service' \
+               /usr/lib/systemd/system/bootowser.service
           echo "units verified"
 
       - name: install layout round-trips without root
@@ -119,9 +395,15 @@ jobs:
           test -x "$prefix/lib/bootowser/bootowser-xsession"
           test -f "$prefix/share/bootowser/xorg.conf"
           test -f "$prefix/etc/bootowser/bootowser.conf"
-          test -f "$prefix/etc/bootowser/policies/managed/bootowser.json"
+          test -f "$prefix/etc/bootowser/control.conf"
+          test -f "$prefix/etc/sudoers.d/bootowser"
+          test -x "$prefix/lib/bootowser/commands/restart-kiosk.sh"
+          test -x "$prefix/lib/bootowser/commands/whoami-root.sh"
           test -f "$prefix/lib/systemd/system/bootowser.service"
           test -f "$prefix/lib/systemd/system/bootowser-xserver.service"
+          test -f "$prefix/lib/systemd/system/bootowser-control.service"
+          grep -q '^Wants=bootowser-control.service' \
+               "$prefix/lib/systemd/system/bootowser.service"
           # Bootowser must not install or configure a boot splash.
           test -z "$(find "$prefix" -ipath '*plymouth*' -print -quit)"
           # And it must wait for whatever splash is already in use.
@@ -150,10 +432,3 @@ jobs:
           cd /tmp/bootowser-debian
           test -f source/format && test -f control && test -f changelog
           test -x rules && test -x postinst && test -x postrm
-
-  patches:
-    name: chromium patch series
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: ./tools/verify-patches.sh
