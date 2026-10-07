@@ -29,14 +29,15 @@ case "$1" in
     fi
 
     if [ -z "$2" ] && [ -e /etc/bootowser/bootowser.conf ]; then
-      # A fresh install ships a placeholder URL. Kiosks that boot to
-      # about:blank look broken, so make the next step obvious.
-      if grep -q '^START_URL="about:blank"$' /etc/bootowser/bootowser.conf; then
+      # A fresh install ships a placeholder URL, and the units are enabled
+      # at boot now, so the first boot would show the placeholder. Make the
+      # next step obvious.
+      if grep -q '^START_URL="https://start.example.com"$' /etc/bootowser/bootowser.conf; then
         cat >&2 <<'MSG'
 
-bootowser: set your start URL before enabling the service:
+bootowser: set your start URL before the first boot:
     $EDITOR /etc/bootowser/bootowser.conf
-    systemctl enable --now bootowser
+    systemctl start bootowser        # or just reboot
 
 MSG
       fi

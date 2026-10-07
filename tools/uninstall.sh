@@ -15,6 +15,7 @@ set -euo pipefail
 PREFIX="${BOOTOWSER_PREFIX:-/usr}"
 ETC_DIR="${BOOTOWSER_ETC_DIR:-/etc/bootowser}"
 STATE_DIR="${BOOTOWSER_STATE_DIR:-/var/lib/bootowser}"
+SYSTEMD_ETC="${BOOTOWSER_SYSTEMD_ETC:-/etc/systemd/system}"
 
 PURGE=0
 ASSUME_NO=0
@@ -71,10 +72,11 @@ if [ "$(id -u)" -ne 0 ]; then
   UNPRIV=1
   ETC_DIR="${PREFIX}/etc/bootowser"
   STATE_DIR="${PREFIX}/var/lib/bootowser"
+  SYSTEMD_ETC="${PREFIX}/etc/systemd/system"
 else
   UNPRIV=0
 fi
-readonly LIB_DIR SHARE_DIR UNIT_DIR ETC_DIR STATE_DIR
+readonly LIB_DIR SHARE_DIR UNIT_DIR ETC_DIR STATE_DIR SYSTEMD_ETC
 
 # --- Stop and disable ------------------------------------------------------
 if [ "${UNPRIV}" -eq 1 ]; then
@@ -102,6 +104,11 @@ fi
 # --prefix dry run still cleans up after itself.
 rm -f "${UNIT_DIR}/bootowser.service" "${UNIT_DIR}/bootowser-xserver.service" \
       "${UNIT_DIR}/bootowser-control.service"
+
+# The wait-for-splash drop-in, if one was installed. Only ours goes; the
+# directory itself survives when the operator has other drop-ins in it.
+rm -f "${SYSTEMD_ETC}/bootowser.service.d/wait-for-splash.conf"
+rmdir "${SYSTEMD_ETC}/bootowser.service.d" 2>/dev/null || true
 
 # The sudoers rule hands root to scripts under LIB_DIR, so it must not
 # outlive them. Its directory mirrors install.sh: /etc/sudoers.d for a real

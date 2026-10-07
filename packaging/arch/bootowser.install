@@ -1,0 +1,32 @@
+#!/bin/sh
+# pacman scriptlet hooks for bootowser.
+#
+# Mirrors tools/install.sh and tools/uninstall.sh: enable on install, never
+# re-enable on upgrade (an operator may deliberately have disabled the
+# kiosk), restore the console getty on removal.
+
+post_install() {
+  echo "==> Enabling the Bootowser units at boot:"
+  systemctl enable bootowser.service bootowser-xserver.service \
+                   bootowser-control.service 2>/dev/null || true
+  echo "==> Set your start URL before the first boot:"
+  echo "    \$EDITOR /etc/bootowser/bootowser.conf"
+}
+
+post_upgrade() {
+  # daemon-reload only. Re-enabling here would fight an operator who ran
+  # `systemctl disable`, and an upgrade is not the place to overrule them.
+  systemctl daemon-reload 2>/dev/null || true
+}
+
+post_remove() {
+  systemctl disable bootowser.service bootowser-xserver.service \
+                    bootowser-control.service 2>/dev/null || true
+  # Same check as tools/uninstall.sh: is-enabled is quiet about masked
+  # units, so the symlink is the reliable tell.
+  if systemctl is-enabled --quiet getty@tty1.service 2>/dev/null || \
+     [ -L /etc/systemd/system/getty@tty1.service ]; then
+    systemctl unmask getty@tty1.service 2>/dev/null || true
+    systemctl enable getty@tty1.service 2>/dev/null || true
+  fi
+}

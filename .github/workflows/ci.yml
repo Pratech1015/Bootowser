@@ -157,6 +157,7 @@ jobs:
             echo "::endgroup::"
           done
           sh -n packaging/debian/postinst packaging/debian/postrm
+          sh -n packaging/arch/bootowser.install
           bash -n packaging/arch/PKGBUILD packaging/debian/rules
 
       - name: shellcheck
@@ -384,6 +385,12 @@ jobs:
                            "$root/usr/lib/systemd/system/bootowser-xserver.service"
           install -m 0644 runtime/lib/systemd/system/bootowser-control.service \
                            "$root/usr/lib/systemd/system/bootowser-control.service"
+          # Verify the wait-for-splash drop-in parses too: stage it so the
+          # merged unit is what systemd-analyze sees.
+          install -d -m 0755 "$root/etc/systemd/system/bootowser.service.d"
+          install -m 0644 \
+            runtime/lib/systemd/system/bootowser.service.d/wait-for-splash.conf \
+            "$root/etc/systemd/system/bootowser.service.d/wait-for-splash.conf"
           systemd-analyze verify --root="$root" \
                                   /usr/lib/systemd/system/bootowser.service \
                                   /usr/lib/systemd/system/bootowser-xserver.service \
@@ -393,6 +400,10 @@ jobs:
           grep -q '^Wants=bootowser-control.service' \
                "$root/usr/lib/systemd/system/bootowser.service"
           grep -q '^After=bootowser-control.service' \
+               "$root/usr/lib/systemd/system/bootowser.service"
+          # And the base unit stays on the immediate path: the splash
+          # ordering lives only in the drop-in staged above.
+          grep -q '^After=bootowser-xserver.service$' \
                "$root/usr/lib/systemd/system/bootowser.service"
           echo "units verified"
 
@@ -421,16 +432,43 @@ jobs:
                "$prefix/lib/systemd/system/bootowser.service"
           # Bootowser must not install or configure a boot splash.
           test -z "$(find "$prefix" -ipath '*plymouth*' -print -quit)"
-          # And it must wait for whatever splash is already in use.
-          grep -q 'After=.*plymouth-quit-wait' \
+          # The default must be the immediate start: no ordering against a
+          # boot splash, no udev-settle wait, no admin drop-in installed.
+          # Directive-only matches: the units' comments name these units
+          # while explaining why they are not ordered against.
+          if grep -q '^After=.*plymouth-quit-wait' \
+               "$prefix/lib/systemd/system/bootowser.service"; then
+            echo "::error::bootowser.service waits for plymouth-quit-wait by default"
+            exit 1
+          fi
+          if grep -q '^After=.*udev-settle' \
+               "$prefix/lib/systemd/system/bootowser-xserver.service"; then
+            echo "::error::bootowser-xserver.service orders after systemd-udev-settle"
+            exit 1
+          fi
+          grep -q '^WantedBy=multi-user.target' \
             "$prefix/lib/systemd/system/bootowser.service"
-          echo "install layout OK, no splash installed"
+          test ! -e "$prefix/etc/systemd/system/bootowser.service.d/wait-for-splash.conf"
+          echo "install layout OK, no splash installed, starts immediately"
 
           # uninstall.sh must be able to clean up the same tree.
           ALLOW_UNPRIVILEGED_TESTING=1 ./tools/uninstall.sh \
             --prefix "$prefix" --purge --yes >/dev/null
           test -z "$(find "$prefix" -type f -print -quit)"
           echo "uninstall layout OK"
+
+          # --wait-for-splash is the opt-in: same tree, plus the drop-in,
+          # and uninstall takes the drop-in back out again.
+          prefix=/tmp/bootowser-prefix-splash
+          rm -rf "$prefix"
+          ALLOW_UNPRIVILEGED_TESTING=1 ./tools/install.sh \
+            --prefix "$prefix" --no-mask-getty --wait-for-splash >/dev/null
+          grep -q 'plymouth-quit-wait' \
+            "$prefix/etc/systemd/system/bootowser.service.d/wait-for-splash.conf"
+          ALLOW_UNPRIVILEGED_TESTING=1 ./tools/uninstall.sh \
+            --prefix "$prefix" --purge --yes >/dev/null
+          test -z "$(find "$prefix" -type f -print -quit)"
+          echo "wait-for-splash round-trip OK"
 
           # The dry-run escape hatch must stay confined to /tmp.
           if ALLOW_UNPRIVILEGED_TESTING=1 ./tools/install.sh --prefix /usr \

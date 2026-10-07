@@ -121,13 +121,13 @@ override_dh_auto_build:
 
 override_dh_auto_install:
 
-# Runtime state directory, owned by the kiosk user.
+# Enabled at boot by default: installing a kiosk package is asking it to boot
+# into one. --no-start stays, so installing never takes over the screen of a
+# machine that is in the middle of something.
 override_dh_installsystemd:
-	dh_installsystemd --name=bootowser-xserver --no-enable --no-start
-	dh_installsystemd --name=bootowser --no-enable --no-start
-	dh_installsystemd --name=bootowser-control --no-enable --no-start
-	dh_systemd_enable --no-enable bootowser.service bootowser-xserver.service \
-	                 bootowser-control.service || true
+	dh_installsystemd --name=bootowser-xserver --no-start
+	dh_installsystemd --name=bootowser --no-start
+	dh_installsystemd --name=bootowser-control --no-start
 
 override_dh_fixperms:
 	dh_fixperms

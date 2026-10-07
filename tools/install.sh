@@ -7,8 +7,10 @@
 # the kiosk can own vt1.
 #
 # No boot splash is installed. Whatever Plymouth theme the machine already uses
-# keeps showing during boot, and bootowser.service simply waits for
-# plymouth-quit-wait.service before taking the screen.
+# keeps showing during boot, and the browser starts as soon as its display
+# server is up. Pass --wait-for-splash to hold it until plymouth-quit-wait
+# releases the screen instead, for splash setups that have to finish first
+# (a LUKS passphrase prompt, for example).
 #
 # Bootowser is NOT installed by this script: point --browser at a build tree
 # (see firefox/fetch.sh). A distro Firefox is only usable with
@@ -25,10 +27,16 @@ PREFIX="${BOOTOWSER_PREFIX:-/usr}"
 # is no root to write there and the point is only to exercise the file layout.
 ETC_DIR="${BOOTOWSER_ETC_DIR:-/etc/bootowser}"
 STATE_DIR="${BOOTOWSER_STATE_DIR:-/var/lib/bootowser}"
+# Admin-level unit drop-ins (--wait-for-splash writes one), except in a dry
+# run, where everything lands under the prefix.
+SYSTEMD_ETC="${BOOTOWSER_SYSTEMD_ETC:-/etc/systemd/system}"
 readonly SERVICE_USER="bootowser"
 
-ENABLE_SERVICE=0
+# On by default: installing a kiosk is wanting it to boot into one. Pass
+# --no-enable to lay the tree down without touching boot enablement.
+ENABLE_SERVICE=1
 ENABLE_NOW=0
+WAIT_FOR_SPLASH=0
 BROWSER_BIN=""
 
 usage() {
@@ -40,8 +48,12 @@ Usage: ${0##*/} [options]
 
   --browser DIR    install the Bootowser tree from DIR as ${lib_dir}/bootowser
                    (optional; see ALLOW_SYSTEM_BROWSER below)
-  --enable         enable bootowser.service at boot
+  --enable         enable the units at boot (default)
+  --no-enable      do not enable the units at boot
   --now            start bootowser.service immediately (implies --enable)
+  --wait-for-splash
+                   order the browser after plymouth-quit-wait.service, so the
+                   existing boot splash finishes before the browser starts
   --prefix DIR     install under DIR instead of ${PREFIX}
   --no-mask-getty  do not mask getty@tty1 (you will lose console access to vt1)
   -h, --help       show this help
@@ -55,7 +67,9 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --browser)      BROWSER_BIN="$2"; shift 2 ;;
     --enable)       ENABLE_SERVICE=1; shift ;;
+    --no-enable)    ENABLE_SERVICE=0; shift ;;
     --now)          ENABLE_NOW=1; ENABLE_SERVICE=1; shift ;;
+    --wait-for-splash) WAIT_FOR_SPLASH=1; shift ;;
     --prefix)       PREFIX="$2"; shift 2 ;;
     --no-mask-getty) MASK_GETTY=0; shift ;;
     -h|--help)      usage; exit 0 ;;
@@ -89,12 +103,13 @@ if [ "$(id -u)" -ne 0 ]; then
   UNPRIV=1
   ETC_DIR="${PREFIX}/etc/bootowser"
   STATE_DIR="${PREFIX}/var/lib/bootowser"
+  SYSTEMD_ETC="${PREFIX}/etc/systemd/system"
 else
   UNPRIV=0
 fi
 
 # Now that any dry-run override has been applied, freeze them.
-readonly ETC_DIR STATE_DIR
+readonly ETC_DIR STATE_DIR SYSTEMD_ETC
 
 command -v systemctl >/dev/null 2>&1 || die "systemd is required"
 
@@ -282,6 +297,17 @@ install -m 0644 "${REPO_ROOT}/runtime/lib/systemd/system/bootowser-xserver.servi
 install -m 0644 "${REPO_ROOT}/runtime/lib/systemd/system/bootowser-control.service" \
                "${UNIT_DIR}/bootowser-control.service"
 
+# Optional splash ordering: the base unit starts immediately, and this
+# drop-in is the opt-in. Written before the daemon-reload below so systemd
+# sees it on the same reload it gets for the units themselves.
+if [ "${WAIT_FOR_SPLASH}" -eq 1 ]; then
+  log "ordering the browser after the boot splash (wait-for-splash)"
+  install -d -m 0755 "${SYSTEMD_ETC}/bootowser.service.d"
+  install -m 0644 \
+    "${REPO_ROOT}/runtime/lib/systemd/system/bootowser.service.d/wait-for-splash.conf" \
+    "${SYSTEMD_ETC}/bootowser.service.d/wait-for-splash.conf"
+fi
+
 if [ "${UNPRIV}" -eq 1 ]; then
   warn "dry run: not masking getty@tty1, not reloading or starting systemd"
 elif [ "${MASK_GETTY}" -eq 1 ]; then
@@ -296,7 +322,9 @@ if [ "${UNPRIV}" -eq 0 ]; then
 
   if [ "${ENABLE_SERVICE}" -eq 1 ]; then
     log "enabling bootowser units"
-    systemctl enable bootowser.service bootowser-xserver.service bootowser-control.service
+    systemctl enable bootowser.service bootowser-xserver.service \
+                     bootowser-control.service >/dev/null 2>&1 || \
+      warn "could not enable the units at boot; do it with: systemctl enable bootowser bootowser-xserver bootowser-control"
   fi
 
   if [ "${ENABLE_NOW}" -eq 1 ]; then
@@ -304,6 +332,30 @@ if [ "${UNPRIV}" -eq 0 ]; then
     systemctl restart bootowser.service
     log "watch it with: journalctl -fu bootowser"
   fi
+fi
+
+# The closing notes depend on the flags just applied, so they are built
+# here rather than inlined in the heredoc.
+boot_note=""
+if [ "${UNPRIV}" -eq 0 ]; then
+  if [ "${ENABLE_SERVICE}" -eq 1 ]; then
+    boot_note="The units are enabled at boot (undo with: systemctl disable bootowser bootowser-xserver bootowser-control)."
+  else
+    boot_note="The units are NOT enabled at boot (--no-enable). Enable later with: systemctl enable bootowser bootowser-xserver bootowser-control"
+  fi
+fi
+
+if [ "${WAIT_FOR_SPLASH}" -eq 1 ]; then
+  splash_note="Your existing Plymouth theme is untouched: it shows during boot as usual, and
+the browser waits for plymouth-quit-wait.service to release the screen
+(drop-in in ${SYSTEMD_ETC}/bootowser.service.d/). On a LUKS-encrypted root
+the passphrase prompt therefore keeps working, because Bootowser ships no
+theme of its own to break it."
+else
+  splash_note="Your existing Plymouth theme is untouched: it shows during boot as usual, and
+the browser starts as soon as the display server is up, which can cut a
+Plymouth splash short. If the splash has to finish first (a LUKS passphrase
+prompt, for example), rerun with --wait-for-splash."
 fi
 
 cat <<EOF
@@ -318,8 +370,6 @@ Next:
   4. Follow the log:            journalctl -fu bootowser
   5. Undo everything:           ${REPO_ROOT}/tools/uninstall.sh
 
-Your existing Plymouth theme is untouched: it shows during boot as usual, and
-Bootowser takes the screen once plymouth-quit-wait.service releases it. On a
-LUKS-encrypted root the passphrase prompt therefore keeps working, because
-Bootowser ships no theme of its own to break it.
+${boot_note}
+${splash_note}
 EOF

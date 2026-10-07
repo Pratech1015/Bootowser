@@ -31,10 +31,12 @@ Most kiosk setups boot into a window manager, wait for the network, wait for a
 session, wait for a window manager plugin, and then *maybe* show a page. The
 user stares at a spinner for ninety seconds.
 
-Bootowser skips all of that. It orders itself after
-`plymouth-quit-wait.service`, so your existing boot splash stays up until the
-display server is genuinely ready and then gets out of the way — no flash, no
-dead frame, no desktop in between.
+Bootowser skips all of that. The browser starts the moment its display
+server is up — no splash wait, no login session, no window manager — so the
+first frame is a page instead of a desktop. The cost of going that early:
+on a Plymouth system the splash can be cut short while it is still painting.
+`--wait-for-splash` orders the browser after `plymouth-quit-wait.service`
+instead (see [The boot splash](#the-boot-splash)).
 
 ## Install
 
@@ -57,10 +59,11 @@ sudo $EDITOR /etc/bootowser/bootowser.conf
 START_URL="https://example.com/menu"
 ```
 
-And start it:
+And start it (the install has already enabled the units at boot — pass
+`--no-enable` to `install.sh` to opt out of that):
 
 ```sh
-sudo systemctl enable --now bootowser
+sudo systemctl start bootowser
 ```
 
 `install.sh` masks `getty@tty1.service` so the kiosk owns the console. See
@@ -99,10 +102,23 @@ point them at one with `BOOTOWSER_FIREFOX=...`.
 
 ### The boot splash
 
-There is nothing to configure. Bootowser does not install, replace or
-configure any boot splash, and it does not need to: it simply orders itself
-after `plymouth-quit-wait.service`, so your existing theme gets to finish
-first.
+There is nothing Bootowser-side to install: it does not ship, replace or
+configure any boot splash. Your distribution's own theme keeps running
+untouched, and on encrypted roots the passphrase prompt keeps working
+normally, since there is no Bootowser theme sitting in its way.
+
+By default the browser starts the moment its display server is up, which can
+cut a Plymouth splash short. If the splash has to finish first — a LUKS
+passphrase prompt, or simply a theme you want to see to completion — order
+the browser after it:
+
+```sh
+sudo ./tools/install.sh --wait-for-splash
+```
+
+or copy
+`runtime/lib/systemd/system/bootowser.service.d/wait-for-splash.conf` to
+`/etc/systemd/system/bootowser.service.d/` and run `systemctl daemon-reload`.
 
 One thing is worth doing, because it is about your bootloader rather than
 about Bootowser — if you want the kiosk without seeing the bootloader menu on
@@ -111,9 +127,6 @@ every boot:
 ```sh
 sudo bootctl set-timeout 0
 ```
-
-On encrypted root filesystems the passphrase prompt keeps working normally,
-since there is no Bootowser theme sitting in its way.
 
 ## Configuration
 

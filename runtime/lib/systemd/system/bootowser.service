@@ -2,14 +2,16 @@
 Description=Bootowser kiosk browser
 Documentation=https://github.com/Pratech1015/Bootowser
 
-# Wait for whatever boot splash is in use to actually release the screen, so
-# the browser takes over cleanly instead of fighting it. Bootowser ships no
-# splash of its own: this is the distribution's existing Plymouth theme.
+# The browser starts the moment the display server is up. Nothing is ordered
+# against plymouth-quit-wait.service or systemd-user-sessions.service: on a
+# kiosk, waiting for the boot splash or a login session is waiting for
+# nothing, and it is the browser's job to paint the first frame.
 #
-# Listing it in After= is harmless on systems that do not ship Plymouth at all
-# (systemd ignores ordering against units that do not exist), which is what
-# keeps this unit working on Debian, Fedora and Arch alike.
-After=bootowser-xserver.service plymouth-quit-wait.service systemd-user-sessions.service
+# Install the wait-for-splash drop-in to hold the browser until Plymouth has
+# released the screen instead (LUKS prompt, a theme you want to finish):
+#     tools/install.sh --wait-for-splash
+# The drop-in ships at runtime/lib/systemd/system/bootowser.service.d/.
+After=bootowser-xserver.service
 Requires=bootowser-xserver.service
 
 # The page can call the control API (shell commands, root hooks) as soon as
@@ -103,5 +105,8 @@ SyslogIdentifier=bootowser
 StandardOutput=journal
 StandardError=journal
 
+# multi-user.target, like its two siblings: an image whose default target is
+# multi-user would otherwise start the X server and never launch the browser,
+# and multi-user is reached earlier than graphical anyway.
 [Install]
-WantedBy=graphical.target
+WantedBy=multi-user.target

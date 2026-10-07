@@ -4,8 +4,12 @@ Documentation=https://github.com/Pratech1015/Bootowser
 # The X server must own vt1 before anything tries to paint on it, which means
 # the console getty has to be out of the way. tools/install.sh masks it.
 Conflicts=getty@tty1.service
-After=systemd-udev-settle.service
 Before=bootowser.service
+
+# No ordering against systemd-udev-settle.service: settle is deprecated, on
+# most systems nothing pulls it into the transaction (so the ordering would
+# do nothing anyway), and Xorg probes and retries its own device discovery.
+# Waiting for it is how a boot gains a stuck minute for no benefit.
 
 # If X dies the kiosk is dead; restart it, but do not hot-loop. StartLimit*
 # belongs to [Unit], not [Service].

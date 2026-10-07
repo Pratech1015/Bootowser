@@ -31,6 +31,9 @@ optdepends=('xorg-xset: display blanking' 'mesa: hardware acceleration')
 source=("$pkgname-$pkgver.tar.gz")
 sha256sums=('SKIP')
 
+# Enables the units at boot on first install; never re-enables on upgrade.
+install=bootowser.install
+
 _root="$srcdir/$pkgname-$pkgver"
 pkgver() {
   cd "$_root" || exit 1

@@ -9,9 +9,11 @@ configuration that keeps them honest.
                  v
         +-------------------+   your distribution's existing boot
         |     plymouthd     |   splash. Bootowser ships none of its
-        |  (stock theme)    |   own and never touches this.
-        +-------------------+
-                 |  plymouth-quit-wait.service
+        |  (stock theme)    |   own and never touches this; by default
+        +-------------------+   it also does not wait for it.
+                 :
+                 :  --wait-for-splash orders after
+                 :  plymouth-quit-wait.service
                  v
         +-------------------+   bootowser-xserver.service
         |     Xorg          |   minimal, no WM, no network, on vt1
@@ -156,20 +158,32 @@ already had keeps behaving exactly as it did — including on encrypted roots,
 where it still renders the passphrase prompt. Bootowser does not have to
 solve that problem, because it is not in the way.
 
-The hand-off is one line in `bootowser.service`:
+By default the hand-off is one line in `bootowser.service`:
 
 ```
-After=bootowser-xserver.service plymouth-quit-wait.service
+After=bootowser-xserver.service
 ```
 
-`plymouth-quit-wait.service` blocks until Plymouth has genuinely released the
-screen, so Bootowser never draws over a splash that is still up. Listing it in
-`After=` is harmless on a distribution that does not ship Plymouth at all,
-because systemd ignores ordering against units that do not exist — which is
-what keeps one unit file working on Debian, Fedora and Arch.
+The browser starts the moment the display server is up: nothing waits for
+the splash, a login session or the deprecated udev settle, because on a
+kiosk those waits buy nothing and the first frame is the product. The cost
+is that on a Plymouth system the splash can be cut short while it is still
+painting — X and Plymouth both want the display.
 
-The visible result: your boot splash does what it always did, then the browser
-appears. No flicker, no desktop, no login screen in between.
+Install the wait-for-splash drop-in to restore a strict hand-off:
+
+```
+# /etc/systemd/system/bootowser.service.d/wait-for-splash.conf
+[Unit]
+After=plymouth-quit-wait.service systemd-user-sessions.service
+```
+
+`plymouth-quit-wait.service` blocks until Plymouth has genuinely released
+the screen, so the browser never draws over a splash that is still up.
+Listing units that do not exist in `After=` is harmless — systemd ignores
+ordering against them — which is what keeps the drop-in working on Debian,
+Fedora and Arch alike. `tools/install.sh --wait-for-splash` installs it,
+and `tools/uninstall.sh` takes it back out.
 
 ## Where the lockdown actually lives
 

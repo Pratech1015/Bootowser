@@ -166,6 +166,14 @@ usermod -a -G video,render bootowser >/dev/null 2>&1 || :
 %systemd_post bootowser-xserver.service
 %systemd_post bootowser.service
 %systemd_post bootowser-control.service
+# %systemd_post only applies preset policy, and the distribution's default
+# policy may resolve that to "disabled" for units it does not know. Enable
+# explicitly so the kiosk actually boots. First install only: an upgrade
+# must not re-enable units an operator deliberately disabled.
+if [ "$1" -eq 1 ]; then
+  systemctl enable bootowser-xserver.service bootowser.service \
+                   bootowser-control.service >/dev/null 2>&1 || :
+fi
 
 %preun systemd
 %systemd_preun bootowser-xserver.service

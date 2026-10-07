@@ -203,8 +203,10 @@ sudo systemctl stop bootowser
 Bootowser ships no boot splash. It installs nothing into
 `/usr/share/plymouth/themes` and runs no `plymouth` command, so your
 distribution's own theme keeps handling the unlock prompt exactly as before.
-`bootowser.service` orders itself after `plymouth-quit-wait.service`, so the
-browser appears only once the machine is unlocked and the splash released.
+By default the browser starts as soon as its display server is up; with the
+wait-for-splash drop-in (`tools/install.sh --wait-for-splash`) it orders
+itself after `plymouth-quit-wait.service` instead, so the browser appears
+only once the machine is unlocked and the splash released.
 
 To come up as early as possible after unlock:
 

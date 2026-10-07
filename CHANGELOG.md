@@ -29,6 +29,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Rewrote the packaging for all three families to install a Firefox *tree*
     rather than a single binary, falling back to the system install when no
     tree is staged.
+- **The units are enabled at boot by default.** `install.sh` enables them
+  unless `--no-enable` is passed; the Debian package drops `--no-enable`
+  from `dh_installsystemd`; the Arch package ships `bootowser.install`
+  (enable on first install, never re-enable on upgrade); the Fedora spec
+  enables them explicitly after the preset, because preset policy may
+  resolve to disabled for units it does not know.
+- **Boot is immediate.** `bootowser.service` no longer orders after
+  `plymouth-quit-wait.service` or `systemd-user-sessions.service`, and
+  `bootowser-xserver.service` no longer after the deprecated
+  `systemd-udev-settle`: the first frame comes as soon as the X server is
+  up. `bootowser.service` is also `WantedBy=multi-user.target` like its two
+  siblings now, so it starts on machines whose default target is not
+  graphical (it used to start the X server and never launch the browser
+  there). Splash-first hand-off is the opt-in `--wait-for-splash` drop-in.
 
 ### Added
 
@@ -51,6 +65,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tools/firefox-policy-names.txt` and a CI check that every policy name in
   `policies.json` is a real Firefox policy. Firefox silently ignores names it
   does not recognise, so a typo is an invisible hole in the lockdown.
+- `tools/install.sh --wait-for-splash`: order the browser after
+  `plymouth-quit-wait.service` so the existing boot splash finishes before
+  the browser starts (LUKS passphrase prompt, a theme you want to see to
+  completion). Ships as an inactive example drop-in for the packages, from
+  `runtime/lib/systemd/system/bootowser.service.d/wait-for-splash.conf`;
+  `--no-enable` is the counterpart for boot enablement.
 
 ### Fixed
 
@@ -70,6 +90,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   first run and `ProtectHome=true` turned that into a failure to start.
 - `packaging/debian/rules` never created `debian/bootowser/lib/systemd/system`,
   so a real `dpkg-buildpackage` would have failed installing the units.
+- The Debian postinst hint "set your start URL before enabling the service"
+  never printed: it grepped for `START_URL="about:blank"` while the shipped
+  default is `START_URL="https://start.example.com"`. It now matches the
+  shipped placeholder and no longer suggests `systemctl enable --now`, which
+  the package itself does.
 
 ### Known limitations
 
