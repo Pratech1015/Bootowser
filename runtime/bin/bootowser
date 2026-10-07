@@ -209,7 +209,10 @@ fi
 CMD=( "${BROWSER}" )
 case "${FULLSCREEN}" in
   yes)
-    CMD+=( --kiosk "${START_URL}" --kiosk-monitor 1 )
+    # No --kiosk-monitor: its index is 0-based, so a hardcoded value breaks
+    # every machine without that monitor (Firefox then just opens a window).
+    # The default monitor is right for a kiosk; pick another via EXTRA_SWITCHES.
+    CMD+=( --kiosk "${START_URL}" )
     ;;
   no)
     case "${WINDOW_SIZE}" in
