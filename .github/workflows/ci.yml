@@ -55,9 +55,12 @@ jobs:
           }
 
           # Shallow, tag-only clone: enough to apply a patch series, and it
-          # avoids the ~20 GB a full Firefox history would cost CI.
+          # avoids the ~20 GB a full Firefox history would cost CI. No
+          # --filter=blob:none: a partial clone turns every later checkout
+          # into a lazy fetch that GitHub has been observed to drop
+          # mid-transfer; one pack up front is the reliable shape.
           echo "::group::clone firefox $pinned"
-          git clone --filter=blob:none --no-checkout --depth 1 \
+          git clone --no-checkout --depth 1 \
             --branch "$pinned" https://github.com/mozilla-firefox/firefox.git \
             firefox-src
           echo "::endgroup::"
@@ -187,42 +190,38 @@ jobs:
           python3 - <<'PY'
           import json, sys
           from pathlib import Path
-          path = "runtime/etc/bootowser/policies/managed/policies.json"
-          with open(path) as fh:
-              data = json.load(fh)
+          path = Path("runtime/etc/bootowser/policies/managed/policies.json")
+          data = json.loads(path.read_text())
+          # A key Firefox does not know at the top level is ignored with no
+          # warning at all, so a stray one would sit there looking applied.
+          stray = sorted(set(data) - {"policies", "BootowserManaged"})
+          if stray:
+              sys.exit(f"policy file has stray top-level keys: {stray}")
+          pols = data.get("policies")
+          if not isinstance(pols, dict) or not pols:
+              sys.exit("policy file has no policies")
           # Firefox ignores unknown members silently, so a typo in a policy
           # name is a hole in the lockdown that nothing reports. The name list
           # is vendored so this check never depends on the network.
-          path = Path("tools/firefox-policy-names.txt")
-          known = {ln.strip() for ln in path.read_text().splitlines()
+          names = Path("tools/firefox-policy-names.txt")
+          if not names.is_file():
+              sys.exit("vendored policy name list is missing")
+          known = {ln.strip() for ln in names.read_text().splitlines()
                    if ln.strip() and not ln.startswith("#")}
+          if not known:
+              sys.exit("vendored policy name list is empty")
           bogus = sorted(set(pols) - known)
           if bogus:
               sys.exit(f"not real Firefox policies: {bogus}")
-          if not path.is_file() or not known:
-              sys.exit("vendored policy name list is missing or empty")
-          print(f"ok: {len(pols)} policies")
+          print(f"ok: {len(pols)} policies, no stray keys")
           PY
 
-      - name: every policy name is a real Firefox policy
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import json, re, sys, urllib.request
-          url = ("https://raw.githubusercontent.com/mozilla/policy-templates/"
-                 "main/README.md")
-          known = set(re.findall(r"^\| \*\*\[`([A-Za-z0-9]+)`\]",
-                                 urllib.request.urlopen(url, timeout=20)
-                                 .read().decode(), re.M))
-          if len(known) < 50:
-              sys.exit(f"policy list looks truncated ({len(known)} names); not checking")
-          pols = json.load(open(
-              "runtime/etc/bootowser/policies/managed/policies.json"))["policies"]
-          bogus = sorted(set(pols) - known)
-          if bogus:
-              sys.exit(f"not real Firefox policies: {bogus}")
-          print(f"ok: all {len(pols)} policies exist upstream")
-          PY
+      # The upstream cross-check that used to live here fetched the
+      # mozilla/policy-templates README table. That table moved to the
+      # Firefox Admin Docs and no longer ships in a machine-readable
+      # place, so tools/firefox-policy-names.txt (checked in the step
+      # above) is the authoritative name list. See its header for how to
+      # refresh it when the Firefox pin is bumped.
 
       - name: every Preferences entry is a prefix Firefox will accept
         run: |
@@ -310,7 +309,7 @@ jobs:
           # names appear as quoted getenv() arguments in patch 0006.
           keys=$(grep -oE '^[A-Z][A-Z0-9_]*=' runtime/etc/bootowser/control.conf \
                  | tr -d '=' | sort -u)
-          used=$(grep -hoE '(getenv|GetEnvInt|GetEnvBool)\("[A-Z0-9_]+" \
+          used=$(grep -hoE '(getenv|GetEnvInt|GetEnvBool)\("[A-Z0-9_]+"' \
                  firefox/patches/0006-*.patch \
                  | sed -E 's/^[a-zA-Z_]+\("//; s/"$//' | sort -u)
           fail=0
@@ -350,35 +349,40 @@ jobs:
         run: |
           set -euo pipefail
           # systemd-analyze verify fails if ExecStart does not exist, so lay
-          # the runtime down the way install.sh does before checking. The
-          # browser binary itself is not needed for a syntax check, and the
-          # control sidecar stub only has to exist for ExecStart and
+          # the runtime down the way install.sh does -- into a throwaway
+          # --root, not onto the runner (or the developer's) live filesystem.
+          # The browser binary itself is not needed for a syntax check, and
+          # the control sidecar stub only has to exist for ExecStart and
           # ConditionPathExists to resolve.
-          sudo install -d -m 0755 /usr/lib/bootowser /usr/share/bootowser \
-                               /usr/lib/systemd/system /etc/bootowser/policies/managed
-          sudo install -m 0755 runtime/bin/bootowser          /usr/lib/bootowser/bootowser
-          sudo install -m 0755 runtime/bin/bootowser-xsession /usr/lib/bootowser/bootowser-xsession
-          sudo install -m 0755 /bin/true                      /usr/lib/bootowser/bootowser-control
-          sudo install -m 0644 runtime/xorg/xorg.conf         /usr/share/bootowser/xorg.conf
-          sudo install -m 0644 runtime/etc/bootowser/bootowser.conf /etc/bootowser/bootowser.conf
-          sudo install -m 0644 runtime/etc/bootowser/control.conf   /etc/bootowser/control.conf
-          sudo install -m 0644 runtime/etc/bootowser/policies/managed/policies.json \
-                           /etc/bootowser/policies/managed/bootowser.json
-          sudo install -m 0644 runtime/lib/systemd/system/bootowser.service \
-                           /usr/lib/systemd/system/bootowser.service
-          sudo install -m 0644 runtime/lib/systemd/system/bootowser-xserver.service \
-                           /usr/lib/systemd/system/bootowser-xserver.service
-          sudo install -m 0644 runtime/lib/systemd/system/bootowser-control.service \
-                           /usr/lib/systemd/system/bootowser-control.service
-          systemd-analyze verify /usr/lib/systemd/system/bootowser.service \
+          root=$(mktemp -d)
+          trap 'rm -rf "$root"' EXIT
+          install -d -m 0755 "$root/usr/lib/bootowser" "$root/usr/share/bootowser" \
+                             "$root/usr/lib/systemd/system" \
+                             "$root/etc/bootowser/policies/managed"
+          install -m 0755 runtime/bin/bootowser          "$root/usr/lib/bootowser/bootowser"
+          install -m 0755 runtime/bin/bootowser-xsession "$root/usr/lib/bootowser/bootowser-xsession"
+          install -m 0755 /bin/true                      "$root/usr/lib/bootowser/bootowser-control"
+          install -m 0644 runtime/xorg/xorg.conf         "$root/usr/share/bootowser/xorg.conf"
+          install -m 0644 runtime/etc/bootowser/bootowser.conf "$root/etc/bootowser/bootowser.conf"
+          install -m 0644 runtime/etc/bootowser/control.conf   "$root/etc/bootowser/control.conf"
+          install -m 0644 runtime/etc/bootowser/policies/managed/policies.json \
+                           "$root/etc/bootowser/policies/managed/bootowser.json"
+          install -m 0644 runtime/lib/systemd/system/bootowser.service \
+                           "$root/usr/lib/systemd/system/bootowser.service"
+          install -m 0644 runtime/lib/systemd/system/bootowser-xserver.service \
+                           "$root/usr/lib/systemd/system/bootowser-xserver.service"
+          install -m 0644 runtime/lib/systemd/system/bootowser-control.service \
+                           "$root/usr/lib/systemd/system/bootowser-control.service"
+          systemd-analyze verify --root="$root" \
+                                  /usr/lib/systemd/system/bootowser.service \
                                   /usr/lib/systemd/system/bootowser-xserver.service \
                                   /usr/lib/systemd/system/bootowser-control.service
           # bootowser.service must keep pulling the sidecar in: without
           # Wants=/After= the page loads before the API is listening.
           grep -q '^Wants=bootowser-control.service' \
-               /usr/lib/systemd/system/bootowser.service
+               "$root/usr/lib/systemd/system/bootowser.service"
           grep -q '^After=bootowser-control.service' \
-               /usr/lib/systemd/system/bootowser.service
+               "$root/usr/lib/systemd/system/bootowser.service"
           echo "units verified"
 
       - name: install layout round-trips without root

@@ -1,3 +1,12 @@
+# Known-good Firefox policy names for the pinned release
+# (see firefox/FIREFOX_VERSION). Firefox silently ignores a policy name it
+# does not recognise, so CI checks the managed policy file against this list.
+#
+# The list used to be cross-checked against the mozilla/policy-templates
+# README table, but that table moved to the Firefox Admin Docs and no
+# longer ships in a machine-readable form. When bumping the Firefox pin,
+# regenerate from the policy table for the new release (the Admin Docs
+# source is mozilla/enterprise-admin-reference) and keep this file sorted.
 3rdparty
 AIControls
 AllowedDomainsForApps
