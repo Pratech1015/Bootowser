@@ -138,6 +138,7 @@ need:
 | `START_URL` | `https://start.example.com` | the page to show. `http`/`https` only. |
 | `FULLSCREEN` | `yes` | `no` opens the page in a window instead of `--kiosk` (debugging) |
 | `WINDOW_SIZE` | `1280x720` | window size when `FULLSCREEN="no"` |
+| `DISABLE_NEW_TABS` | `yes` | refuse new tabs (page `window.open`, Ctrl+T, Ctrl/middle-click); a plain `target=_blank` click follows in the current tab; patched build only |
 | `SCREEN_SIZE` | `auto` | Xorg virtual screen size |
 | `SCREEN_DEPTH` | `24` | framebuffer depth |
 | `DISABLE_GPU` | `no` | software rendering, for broken GPUs |

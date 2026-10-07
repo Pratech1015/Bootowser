@@ -79,6 +79,7 @@ policy file. The patch series in `firefox/patches/` compiles the lockdown in:
 | `0004` | removes the unused browser chrome: 28 dead key bindings and the F10 menu-bar handler compiled out, the rest hidden by CSS |
 | `0005` | strips the crash reporter, updater and Normandy (remote experiments) so nothing can pop a GUI over the kiosk display; also stops `--version` printing the brand twice |
 | `0006` | adds `toolkit/bootowser-control/`, the page-driven command sidecar, which builds into `dist/bin/bootowser-control` alongside the browser |
+| `0007` | refuses new tabs — the page's `window.open`, the Ctrl+click/middle-click link gestures, Ctrl+T — while the profile's `bootowser.disableNewTabs` pref says so (driven by `DISABLE_NEW_TABS` in `bootowser.conf`); a plain `target=_blank` click is diverted to the current tab instead |
 
 `--check` applies the series in a throwaway `git worktree` and throws it
 away, so it never touches your tree and works whether or not you have already

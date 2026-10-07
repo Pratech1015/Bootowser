@@ -72,6 +72,7 @@ SCREEN_DEPTH="${SCREEN_DEPTH:-24}"
 SCREEN_REFRESH="${SCREEN_REFRESH:-60}"
 FULLSCREEN="${FULLSCREEN:-yes}"
 WINDOW_SIZE="${WINDOW_SIZE:-1280x720}"
+DISABLE_NEW_TABS="${DISABLE_NEW_TABS:-yes}"
 IDLE_BLANK_MINUTES="${IDLE_BLANK_MINUTES:-10}"
 IDLE_SUSPEND_MINUTES="${IDLE_SUSPEND_MINUTES:-0}"
 DISABLE_GPU="${DISABLE_GPU:-no}"
@@ -167,6 +168,33 @@ case "${START_URL}" in
   file://*) die "START_URL must be http(s) or about:blank, not file:// (local file access is a local read primitive)" ;;
   *) die "START_URL must start with http://, https://, or be about:blank" ;;
 esac
+
+# ---------------------------------------------------------------------------
+# Profile prefs that belong to the config file
+#
+# user.js is re-read at every start, which is what lets a config key follow an
+# edit: the managed policy file is installed once and cannot. The value is
+# written even when it is false, because a pref dropped from user.js keeps its
+# last value in prefs.js instead of reverting. Only the managed block between
+# the markers is rewritten; anything else in user.js is left alone.
+# ---------------------------------------------------------------------------
+new_tabs_pref=true
+case "${DISABLE_NEW_TABS}" in
+  yes) ;;
+  no) new_tabs_pref=false ;;
+  *) die "DISABLE_NEW_TABS must be yes or no, got: ${DISABLE_NEW_TABS}" ;;
+esac
+user_js="${PROFILE_DIR}/user.js"
+if [ -f "${user_js}" ]; then
+  sed -i '\|^// BEGIN bootowser managed|,\|^// END bootowser managed$|d' "${user_js}" \
+    || die "cannot rewrite the managed block in ${user_js}"
+fi
+{
+  printf '// BEGIN bootowser managed -- rewritten on every start, do not edit\n'
+  printf 'user_pref("bootowser.disableNewTabs", %s);\n' "${new_tabs_pref}"
+  printf '// END bootowser managed\n'
+} >> "${user_js}" || die "cannot write ${user_js}"
+log "new tabs: ${DISABLE_NEW_TABS} (profile pref bootowser.disableNewTabs)"
 
 # ---------------------------------------------------------------------------
 # Display

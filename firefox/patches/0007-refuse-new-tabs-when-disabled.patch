@@ -1,0 +1,138 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bootowser <b@o.local>
+Date: Wed, 7 Oct 2026 19:24:40 +0530
+Subject: [PATCH] [Bootowser] refuse new tabs when the profile says so
+
+A tab opened over the kiosk page *is* the kiosk page replaced: the new
+tab page is off by policy, so what appears is a blank one, and whatever
+put it there now owns the screen. Three entry points can do it, and each
+gets a guard keyed on one pref, bootowser.disableNewTabs:
+
+  * BrowserDOMWindow -- window.open() and friends, which arrive with an
+    nsIOpenWindowInfo, return null, the same contract the popup blocker
+    honours, so page code cannot tell the difference. A plain link click
+    with target="_blank" (or another named target) arrives WITHOUT one:
+    the C++ link handler resolves the target and hands us the load.
+    That is a navigation the page asked for on an ordinary click, not a
+    popup, so it is honoured in the tab the kiosk already has instead of
+    being killed -- such a link never goes dead. Frames use a different
+    private method and are untouched.
+  * URILoadingHelper.openLinkIn -- the modifier link gestures: Ctrl+click
+    and middle-click from the content side and the chrome side alike,
+    plus the context menu entries, since the trusted and web wrappers
+    both delegate here. "current" (the ordinary click) and "save" (a
+    download) pass through; tab, tabshifted, window and chromeless do
+    not.
+  * BrowserCommands.openTab -- Ctrl+T, the tab strip's "+" button and
+    middle-click on the tab bar.
+
+Unlike bootowser.build in the escape-hatch guards, this pref is a
+runtime switch on purpose: new-tab refusal is an operator's config
+choice (bootowser.conf's DISABLE_NEW_TABS), not a lockdown that has to
+withstand the page trying, and the page cannot reach it anyway --
+content cannot write chrome prefs, about:config is locked by policy,
+the devtools are gone, and the control sidecar only runs fixed commands
+from disk. The launcher writes the pref into a managed block of the
+profile's user.js at every start, so a config edit lands on the next
+restart. The default is fail-closed: a profile the launcher never
+touched still refuses.
+
+Upstream builds are unaffected -- they never carry this series -- and on
+a Bootowser build with DISABLE_NEW_TABS=no the guards are inert.
+---
+ browser/base/content/browser-commands.js | 14 ++++++++++++++
+ browser/modules/BrowserDOMWindow.sys.mjs | 24 ++++++++++++++++++++++++
+ browser/modules/URILoadingHelper.sys.mjs | 17 +++++++++++++++++
+ 3 files changed, 55 insertions(+)
+
+diff --git a/browser/base/content/browser-commands.js b/browser/base/content/browser-commands.js
+index 3ed2ddc839..f08bd978b4 100644
+--- a/browser/base/content/browser-commands.js
++++ b/browser/base/content/browser-commands.js
+@@ -226,6 +226,20 @@ var BrowserCommands = {
+   },
+ 
+   openTab({ event, url } = {}) {
++    // [Bootowser] Ctrl+T, the tab strip's "+" button and middle-click on the
++    // tab bar all land here, and a tab opened over the kiosk page *is* the
++    // kiosk page replaced -- the new tab page itself is off by policy, so it
++    // is a blank one. Refuse when the profile says no new tabs. The pref is
++    // runtime rather than bootowser.build (as in the escape-hatch guards)
++    // because this one is an operator's config choice, bootowser.conf's
++    // DISABLE_NEW_TABS written into the profile by the launcher: content
++    // cannot write chrome prefs, about:config is locked by policy and the
++    // devtools are gone, so nothing inside the browser can flip it. The
++    // default is fail-closed for profiles the launcher never touched.
++    if (Services.prefs.getBoolPref("bootowser.disableNewTabs", true)) {
++      return;
++    }
++
+     let werePassedURL = !!url;
+     url ??= BROWSER_NEW_TAB_URL;
+     let searchClipboard =
+diff --git a/browser/modules/BrowserDOMWindow.sys.mjs b/browser/modules/BrowserDOMWindow.sys.mjs
+index 29c5b15106..d2d4db7286 100644
+--- a/browser/modules/BrowserDOMWindow.sys.mjs
++++ b/browser/modules/BrowserDOMWindow.sys.mjs
+@@ -239,6 +239,30 @@ export class BrowserDOMWindow {
+     aPolicyContainer,
+     aSkipLoad
+   ) {
++    // [Bootowser] Everything a content page asks for through window.open and
++    // friends lands here carrying an nsIOpenWindowInfo; frames go through
++    // #getContentWindowOrOpenURIInFrame below and are untouched. A tab or
++    // popup summoned over the kiosk page hides what the kiosk is showing, so
++    // page script gets null, exactly what the popup blocker returns. A link
++    // with target="_blank" (or another named target) reaches us WITHOUT an
++    // nsIOpenWindowInfo -- the C++ link handler resolves the target and hands
++    // us the load -- and that is a plain navigation the page asked for, not a
++    // popup, so it is honoured in the tab the kiosk already has instead of
++    // killing the link. The pref is runtime on purpose, unlike bootowser.build
++    // in patch 0002: this is the operator's config choice (bootowser.conf's
++    // DISABLE_NEW_TABS, written into the profile by the launcher), not a
++    // lockdown that must survive the page trying -- and the page cannot reach
++    // it: content cannot write chrome prefs, about:config is locked by policy,
++    // the devtools are gone, and the control sidecar runs fixed commands from
++    // disk. The default is fail-closed for profiles the launcher never
++    // touched.
++    if (Services.prefs.getBoolPref("bootowser.disableNewTabs", true)) {
++      if (aOpenWindowInfo || aSkipLoad) {
++        return null;
++      }
++      aWhere = Ci.nsIBrowserDOMWindow.OPEN_CURRENTWINDOW;
++    }
++
+     var browsingContext = null;
+     var isExternal = !!(aFlags & Ci.nsIBrowserDOMWindow.OPEN_EXTERNAL);
+     var guessUserContextIdEnabled =
+diff --git a/browser/modules/URILoadingHelper.sys.mjs b/browser/modules/URILoadingHelper.sys.mjs
+index 9f066fe89a..36cf04c495 100644
+--- a/browser/modules/URILoadingHelper.sys.mjs
++++ b/browser/modules/URILoadingHelper.sys.mjs
+@@ -467,6 +467,23 @@ export const URILoadingHelper = {
+       return;
+     }
+ 
++    // [Bootowser] Every link gesture funnels through here: Ctrl+click,
++    // middle-click and target="_blank" from the content side (via
++    // ClickHandlerParent), the same from the chrome side (handleLinkClick),
++    // and the context menu's open-in-new-tab entries, since openTrustedLinkIn
++    // and openWebLinkIn both delegate to this method. "current" is an ordinary
++    // click and "save" is a download, so both pass; tab, tabshifted, window and
++    // chromeless are all "make somewhere new to put this", and the kiosk
++    // refuses them when the profile says no new tabs. See BrowserDOMWindow for
++    // why the switch is a runtime pref instead of bootowser.build.
++    if (
++      where != "current" &&
++      where != "save" &&
++      Services.prefs.getBoolPref("bootowser.disableNewTabs", true)
++    ) {
++      return;
++    }
++
+     let {
+       allowThirdPartyFixup,
+       postData,
+-- 
+2.56.0
+

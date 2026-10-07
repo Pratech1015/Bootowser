@@ -77,6 +77,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bringing a site up inside an existing desktop session. The lockdown does
   not move: the managed policy and the source patches apply identically
   either way — windowed mode gives up only what `--kiosk` itself provides.
+- `DISABLE_NEW_TABS` in `bootowser.conf` (default `yes`): new tabs are
+  refused — the page's `window.open`, plus Ctrl+T, Ctrl+click and
+  middle-click. A plain `target=_blank` click follows in the current tab
+  instead of going dead. The launcher writes the pref into a managed
+  block of the profile's `user.js` at every start, so a config edit
+  takes effect on the next restart. Enforced by patch `0007` on the
+  patched build; a distro Firefox ignores the key, as it ignores the
+  rest of the lockdown.
 
 ### Fixed
 

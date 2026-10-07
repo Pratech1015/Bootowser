@@ -78,6 +78,8 @@ jobs:
             echo "::error::no patch enforces the navigation allowlist"; exit 1; }
           grep -q 'bootowser.build' firefox/patches/*.patch || {
             echo "::error::no patch gates on the bootowser.build static pref"; exit 1; }
+          grep -q 'bootowser.disableNewTabs' firefox/patches/*.patch || {
+            echo "::error::no patch refuses new tabs when bootowser.disableNewTabs is set"; exit 1; }
           # The allow-list must keep the schemes Firefox loads into its own
           # top-level window. Dropping any of these does not fail to compile or
           # fail to apply -- it produces a browser that cannot draw its own UI,
