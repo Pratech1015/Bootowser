@@ -74,6 +74,13 @@ for p in "${PATCHES[@]}"; do PATCH_PATHS+=("${PATCH_DIR}/${p}"); done
 # for. Without this you get "patch does not apply" much later, after a 20 GB
 # build has already burned an afternoon.
 CURRENT_TAG="$(git -C "${SRC_DIR}" describe --tags --abbrev=0 2>/dev/null || true)"
+# The desktop release and its Android build are tagged on the same commit,
+# and git describe is free to name either one -- which fails the check
+# below on a fresh clone even though the tree is exactly right. If the
+# pinned tag is among the tags pointing at HEAD, we are where we should be.
+if git -C "${SRC_DIR}" tag --points-at HEAD 2>/dev/null | grep -Fxq "${FIREFOX_VERSION}"; then
+  CURRENT_TAG="${FIREFOX_VERSION}"
+fi
 if [ -n "${CURRENT_TAG}" ] && [ "${CURRENT_TAG}" != "${FIREFOX_VERSION}" ]; then
   die "firefox-src is at ${CURRENT_TAG} but the patch series targets ${FIREFOX_VERSION}.
      Re-run firefox/fetch.sh, or roll the series forward (see docs/building.md)."
