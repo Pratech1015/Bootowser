@@ -359,6 +359,17 @@ jobs:
           install -d -m 0755 "$root/usr/lib/bootowser" "$root/usr/share/bootowser" \
                              "$root/usr/lib/systemd/system" \
                              "$root/etc/bootowser/policies/managed"
+          # Older systemd-analyze verify (the runner's 255) builds a start
+          # job while verifying and fails when the default dependency chain
+          # reaches a target the throwaway root does not have; current
+          # systemd (262) does not care. Stage the host's targets and
+          # tmp.mount -- which basic.target Wants -- so either is satisfied.
+          for f in /usr/lib/systemd/system/*.target \
+                   /usr/lib/systemd/system/tmp.mount; do
+            if [ -f "$f" ]; then
+              install -m 0644 "$f" "$root/usr/lib/systemd/system/"
+            fi
+          done
           install -m 0755 runtime/bin/bootowser          "$root/usr/lib/bootowser/bootowser"
           install -m 0755 runtime/bin/bootowser-xsession "$root/usr/lib/bootowser/bootowser-xsession"
           install -m 0755 /bin/true                      "$root/usr/lib/bootowser/bootowser-control"
