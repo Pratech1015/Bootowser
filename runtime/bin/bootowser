@@ -70,6 +70,8 @@ START_URL="${START_URL:-about:blank}"
 SCREEN_SIZE="${SCREEN_SIZE:-1920x1080}"
 SCREEN_DEPTH="${SCREEN_DEPTH:-24}"
 SCREEN_REFRESH="${SCREEN_REFRESH:-60}"
+FULLSCREEN="${FULLSCREEN:-yes}"
+WINDOW_SIZE="${WINDOW_SIZE:-1280x720}"
 IDLE_BLANK_MINUTES="${IDLE_BLANK_MINUTES:-10}"
 IDLE_SUSPEND_MINUTES="${IDLE_SUSPEND_MINUTES:-0}"
 DISABLE_GPU="${DISABLE_GPU:-no}"
@@ -196,15 +198,36 @@ fi
 # ---------------------------------------------------------------------------
 # Command line
 #
-# Firefox has a real --kiosk mode: fullscreen that cannot be exited from
-# within the browser, no context menu, no URL or loading status. Everything
-# else that kiosk mode does not cover is handled by the managed policy.
+# Fullscreen is Firefox's real --kiosk mode: fullscreen that cannot be
+# exited from within the browser, no context menu, no URL or loading status.
+# Everything else that kiosk mode does not cover is handled by the managed
+# policy, which is independent of this switch: FULLSCREEN=no gives up only
+# what --kiosk itself provides, and the source patches and policy still
+# apply. That is what makes the windowed variant a debugging mode rather
+# than a hole.
 # ---------------------------------------------------------------------------
-CMD=(
-  "${BROWSER}"
-  --kiosk
-  "${START_URL}"
-  --kiosk-monitor 1
+CMD=( "${BROWSER}" )
+case "${FULLSCREEN}" in
+  yes)
+    CMD+=( --kiosk "${START_URL}" --kiosk-monitor 1 )
+    ;;
+  no)
+    case "${WINDOW_SIZE}" in
+      [0-9]*x[0-9]*) ;;
+      *) die "WINDOW_SIZE must look like 1920x1080, got: ${WINDOW_SIZE}" ;;
+    esac
+    case "${WINDOW_SIZE}" in
+      *[!0-9x]*|*x*x*) die "WINDOW_SIZE must look like 1920x1080, got: ${WINDOW_SIZE}" ;;
+    esac
+    # Gecko wants WIDTH,HEIGHT; the config file says WIDTHxHEIGHT, the same
+    # way SCREEN_SIZE does.
+    CMD+=( "${START_URL}" "--window-size=${WINDOW_SIZE/x/,}" )
+    ;;
+  *)
+    die "FULLSCREEN must be yes or no, got: ${FULLSCREEN}"
+    ;;
+esac
+CMD+=(
   --profile "${PROFILE_DIR}"
   --no-remote
   --new-instance

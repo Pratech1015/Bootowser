@@ -71,6 +71,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   completion). Ships as an inactive example drop-in for the packages, from
   `runtime/lib/systemd/system/bootowser.service.d/wait-for-splash.conf`;
   `--no-enable` is the counterpart for boot enablement.
+- `FULLSCREEN` and `WINDOW_SIZE` in `bootowser.conf`. The page was already
+  configurable (`START_URL`) and fullscreen was already the only mode;
+  `FULLSCREEN="no"` now opens that same page in a plain window instead, for
+  bringing a site up inside an existing desktop session. The lockdown does
+  not move: the managed policy and the source patches apply identically
+  either way — windowed mode gives up only what `--kiosk` itself provides.
 
 ### Fixed
 

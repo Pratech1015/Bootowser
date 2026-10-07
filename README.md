@@ -135,11 +135,13 @@ need:
 
 | key | default | what it does |
 | --- | --- | --- |
-| `START_URL` | `about:blank` | the page to show. `http`/`https` only. |
-| `SCREEN_SIZE` | `1920x1080` | Xorg virtual screen size |
+| `START_URL` | `https://start.example.com` | the page to show. `http`/`https` only. |
+| `FULLSCREEN` | `yes` | `no` opens the page in a window instead of `--kiosk` (debugging) |
+| `WINDOW_SIZE` | `1280x720` | window size when `FULLSCREEN="no"` |
+| `SCREEN_SIZE` | `auto` | Xorg virtual screen size |
 | `SCREEN_DEPTH` | `24` | framebuffer depth |
 | `DISABLE_GPU` | `no` | software rendering, for broken GPUs |
-| `IDLE_BLANK_MINUTES` | `10` | blank the screen after N minutes, `0` disables |
+| `IDLE_BLANK_MINUTES` | `0` | blank the screen after N minutes, `0` disables |
 | `IDLE_SUSPEND_MINUTES` | `0` | suspend the system after N minutes |
 | `EXTRA_SWITCHES` | | passed straight to Firefox |
 | `PROFILE_DIR` | `/var/lib/bootowser/profile` | profile location, point at tmpfs to keep it in RAM |
@@ -158,8 +160,11 @@ allowing an origin means.
 
 Two layers:
 
-1. **Kiosk mode** — Firefox's own `--kiosk` gives fullscreen that cannot be
-   exited from inside the browser, with no context menu and no status UI.
+1. **Kiosk mode** — Firefox's own `--kiosk` (the default `FULLSCREEN="yes"`)
+   gives fullscreen that cannot be exited from inside the browser, with no
+   context menu and no status UI. `FULLSCREEN="no"` gives that layer up for a
+   debug window; the policy below and the source patches still apply either
+   way.
 2. **Policy** — 47 managed policies in one auditable file: no sign-in, no
    telemetry, no updates, no studies, no developer tools, no about:config, no
    password manager, no printing, no remote settings.
