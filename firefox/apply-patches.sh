@@ -50,6 +50,13 @@ done
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
+# git am needs a committer identity, and a fresh container or CI runner
+# often has none. Fall back for this script only when the machine has no
+# e-mail configured, so a real identity still wins where one exists.
+if ! git config --get user.email >/dev/null 2>&1; then
+  export GIT_COMMITTER_NAME="Bootowser" GIT_COMMITTER_EMAIL="b@o.local"
+fi
+
 [ -f "${PATCH_DIR}/series" ] || die "missing ${PATCH_DIR}/series"
 # .git is a directory in a normal clone but a file in a linked worktree; accept
 # both so --check can run against a disposable worktree.
