@@ -22,4 +22,16 @@
 
 # Build logs and scratch
 *.log
+
+# The packaged browser and its tarball, sitting in the repo root after a
+# local ./mach package. The extracted tree is several hundred MB and the
+# tarball is the same bytes you can pull from the GitHub release.
+/bootowser/
+/bootowser-*.tar.xz
+
+# Kiosk test rig: config, profile and the local test page used for
+# manual runs of the launcher.
+/bs-test.conf
+/bs-test/
+/bs-tabs-test/
 /tmp/
