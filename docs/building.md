@@ -139,15 +139,34 @@ directory, not just that file — `install.sh --browser` and the packagers copy
 the tree because Firefox will not start without `omni.ja` and the shared
 libraries beside it.
 
+**That `dist/bin` is a symlink farm into the source tree**, not a
+self-contained build. Moving or deleting `firefox-src` afterwards leaves
+dangling links: the browser dies with `Missing chrome or resource URL`
+errors while `--version` still answers, which makes it look healthy. For
+anything you intend to keep or ship, make a real package:
+
+```sh
+./mach package
+```
+
+which dereferences everything and lands
+`obj-bootowser/dist/bootowser-<version>.en-US.linux-x86_64.tar.xz` — a
+self-contained tree with `omni.ja` beside the binary. That is what the
+GitHub release ships.
+
 ## Install your build
 
 ```sh
 cd Bootowser
-sudo ./tools/install.sh --browser /mnt/fast/firefox-src/obj-bootowser/dist/bin/bootowser
+tar -xJf bootowser-<version>.en-US.linux-x86_64.tar.xz
+sudo ./tools/install.sh --browser ./bootowser
 ```
 
-Pass the directory's `firefox` binary, not `libxul.so`. The installer checks
-for that and tells you off if you get it wrong.
+Pass the directory holding the browser binary — `bootowser` in a Bootowser
+build, `firefox` in a stock tree — not `libxul.so`. The installer checks
+for that and tells you off if you get it wrong. A live
+`obj-bootowser/dist/bin` works too, as long as the source tree stays where
+it is — see the symlink warning above.
 
 ## Artifact builds
 
@@ -184,16 +203,16 @@ Then:
 ./firefox/apply-patches.sh --src-dir /mnt/fast/firefox-src --check
 ```
 
-Expect work here. Both patches touch files Mozilla reorders often:
+Expect work here. The patches touch files Mozilla reorders often:
 `nsDocShell.cpp` (9000+ lines, heavily refactored), `browser.js`, and
 `StaticPrefList.yaml`, which is regenerated periodically and is where Firefox
 broke most third-party builds between releases. A `3way` apply usually saves
 it; a rejected hunk is usually a moved function, and the fix is to re-anchor
 the context rather than to re-read the whole file.
 
-The upside is that the series is small (two commits, ~300 lines) and both
-patches fail *closed*: if the allowlist stops compiling you notice, and if the
-series fails to apply CI stops before anything is built.
+The upside is that the series is small (seven commits) and the patches fail
+*closed*: if the allow-list stops compiling you notice, and if the series
+fails to apply CI stops before anything is built.
 
 ## Troubleshooting
 
@@ -209,3 +228,5 @@ series fails to apply CI stops before anything is built.
 | `firefox-src is at X but the patch series targets Y` | `FIREFOX_VERSION` changed without replaying the series |
 | error naming a pref and saying it is out of order | a pref was added to `StaticPrefList.yaml` out of alphabetical order |
 | build is extremely slow | you are on a debug config, or on spinning/networked disk |
+| `mach build` stops with a merge-day clobber refusal | add `mk_add_options AUTOCLOBBER=1` to the mozconfig, on a line of its own |
+| `Missing chrome or resource:` and the browser dies at start | you moved or deleted `firefox-src` under a `dist/bin` symlink farm; ship `./mach package` output instead |

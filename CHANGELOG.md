@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.2.0] - 2026-10-08
+
+First Firefox-based release, and the first one with a prebuilt browser tree
+attached. The Chromium implementation is gone: the browser layer is now
+Firefox 156.0.1 plus a seven-patch series, the units are enabled at boot by
+default, and `./mach package` output ships as the release asset.
+
 ### Changed
 
 - **Bootowser is now Firefox-based.** The previous Chromium implementation has
@@ -109,17 +117,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default is `START_URL="https://start.example.com"`. It now matches the
   shipped placeholder and no longer suggests `systemctl enable --now`, which
   the package itself does.
+- **`FULLSCREEN="yes"` did not actually go fullscreen.** The launcher passed
+  `--kiosk-monitor 1`, but the index is 0-based and the test machine has one
+  monitor (eDP-1): Firefox found no monitor 1, ignored the kiosk request and
+  opened a 908x513 window with `fs=0`. Plain `--kiosk` and `--kiosk-monitor 0`
+  both come up `fs=2` at 1920x1080, so the flag is gone; operators with
+  several monitors can name one through `EXTRA_SWITCHES`.
 
 ### Known limitations
 
-- **Navigation is not restricted.** Firefox's kiosk mode hides the user
-  interface but does not confine the browser to one URL, and Firefox has no
-  allow-list policy. A link, a redirect or a script can change what the screen
-  shows. Closing this needs a Gecko `NavigationThrottle` patch, which is not
-  written yet. See `docs/security.md`.
-- **No source build has been run.** The runtime and policy have been exercised
-  with Firefox 156, but `firefox/fetch.sh` and `mozconfig-bootowser` have not
-  been through a full `./mach build`.
+- **Navigation is confined by scheme, not pinned to one URL.** Firefox's
+  kiosk mode hides the interface but does not confine the browser; patch
+  `0001` cancels any top-level navigation outside a short scheme allow-list,
+  so the page cannot steer the kiosk into `about:config`, `file://` or off
+  the web entirely — but any https origin is still allowed, and anyone who
+  can influence the network path chooses *which* site is displayed. Closing
+  that half needs a redirect-blocking proxy; see `docs/security.md`.
+- **The bundled Xorg path and the systemd/root handoff have not been run end
+  to end.** The source build is no longer the unproven part: `./mach build`
+  and `./mach package` complete from a fresh fetch, the packaged tree starts
+  fullscreen, and the `DISABLE_NEW_TABS` guards are live (`window.open`
+  returns null, a plain `target=_blank` click follows in the current tab).
+  What has not been exercised together is the real boot sequence — X server,
+  root hooks and `bootowser.service` — on hardware.
 
 ### Removed
 
@@ -190,5 +210,6 @@ Chromium binary has been compiled from source yet.
 - No all-features build has been completed. Compile errors are likely on the
   first real build.
 
-[Unreleased]: https://github.com/Pratech1015/Bootowser/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Pratech1015/Bootowser/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Pratech1015/Bootowser/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Pratech1015/Bootowser/releases/tag/v0.1.0

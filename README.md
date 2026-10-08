@@ -182,12 +182,17 @@ hatch, somebody will use it. Recovery is Ctrl+Alt+F2, then
 
 ## What this does not protect you from
 
-Firefox's kiosk mode does not stop the page itself from navigating elsewhere —
-no address bar, but a link, a redirect or a script can still take over the
-screen. Firefox has no allow-list policy, so the only way to enforce "this URL
-and nothing else" is a source patch, which Bootowser does not yet ship.
+Firefox's kiosk mode does not stop the page itself from navigating — no
+address bar, but a link, a redirect or a script can still change what the
+screen shows, and Firefox has no allow-list policy. Bootowser enforces this
+in source instead: patch `0001` cancels any top-level navigation outside a
+short scheme allow-list (http/https, plus the handful of `chrome://` and
+`about:` documents Firefox needs to draw its own window), so the page
+cannot steer the kiosk into `about:config`, `file://` or off the web.
 
-This is a real gap, not a footnote. Read
+It is a scheme allow-list, not a host allow-list: it does not pin the kiosk
+to one URL, so anyone who can influence the network path still chooses
+*which* site is displayed. This is a real gap, not a footnote. Read
 [docs/security.md](docs/security.md) before deploying, and read the section on
 navigation before you trust a kiosk on a network you do not control.
 
@@ -197,11 +202,13 @@ This is an early project. Be honest about what that means:
 
 - The runtime, policy lockdown and packaging have been exercised on EndeavourOS
   with Firefox 156. The policy file itself was verified to load by Firefox with
-  zero rejected preferences. But **no full Firefox build from source has been
-  run yet**, and the kiosk has not been run against a real X server and systemd
-  handoff. The optional `firefox/` build tree is unproven; expect to fix things.
-- Navigation is not restricted. See above.
-- No prebuilt packages are published.
+  zero rejected preferences. A full source build of the seven-patch series has
+  been run and packaged with `./mach package`, and a prebuilt browser tree is
+  published on the releases page — but the bundled Xorg path and the
+  systemd/root handoff have not been run end to end.
+- Navigation is confined by scheme, not pinned to one host. See above.
+- No distribution packages are published; the release asset is a browser tree
+  tarball.
 
 ## Documentation
 
