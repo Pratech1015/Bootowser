@@ -142,8 +142,8 @@ need:
 | `SCREEN_SIZE` | `auto` | Xorg virtual screen size |
 | `SCREEN_DEPTH` | `24` | framebuffer depth |
 | `DISABLE_GPU` | `no` | software rendering, for broken GPUs |
-| `IDLE_BLANK_MINUTES` | `0` | blank the screen after N minutes, `0` disables |
-| `IDLE_SUSPEND_MINUTES` | `0` | suspend the system after N minutes |
+| `IDLE_BLANK_MINUTES` | `0` | blank the screen after N minutes, `0` disables (X11 only) |
+| `IDLE_SUSPEND_MINUTES` | `0` | suspend the system after N minutes (X11 only) |
 | `EXTRA_SWITCHES` | | passed straight to Firefox |
 | `PROFILE_DIR` | `/var/lib/bootowser/profile` | profile location, point at tmpfs to keep it in RAM |
 

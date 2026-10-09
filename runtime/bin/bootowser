@@ -289,19 +289,33 @@ CMD+=( "$@" )
 # ---------------------------------------------------------------------------
 # Idle power management, done at the X level where xset lives. Absent xset the
 # kiosk simply never blanks, which is safe if not ideal.
+#
+# Under a Wayland compositor none of this works: xset would talk to Xwayland,
+# whose screen saver and DPMS do not drive the compositor's output. Blanking
+# there is the compositor's job, so say so once instead of doing nothing.
 # ---------------------------------------------------------------------------
-if [ "${IDLE_BLANK_MINUTES}" -gt 0 ] 2>/dev/null && command -v xset >/dev/null 2>&1; then
-  blank_secs=$(( IDLE_BLANK_MINUTES * 60 ))
-  ( xset s "${blank_secs}" 0 "${blank_secs}" 0; \
-    xset dpms 0 0 0 >/dev/null 2>&1 ) &
-  log "display blanks after ${IDLE_BLANK_MINUTES}m of idle"
-elif [ "${IDLE_BLANK_MINUTES}" != "0" ]; then
-  log "warning: IDLE_BLANK_MINUTES is set but xset is not installed; ignoring"
+if [ "${IDLE_BLANK_MINUTES}" -gt 0 ] 2>/dev/null; then
+  if [ -n "${WAYLAND_DISPLAY:-}" ]; then
+    log "warning: IDLE_BLANK_MINUTES is ignored under Wayland; blank the screen in the compositor instead"
+  elif command -v xset >/dev/null 2>&1; then
+    blank_secs=$(( IDLE_BLANK_MINUTES * 60 ))
+    ( xset s "${blank_secs}" 0; xset dpms 0 0 0 >/dev/null 2>&1 ) &
+    log "display blanks after ${IDLE_BLANK_MINUTES}m of idle"
+  else
+    log "warning: IDLE_BLANK_MINUTES is set but xset is not installed; ignoring"
+  fi
 fi
 
-if [ "${IDLE_SUSPEND_MINUTES}" -gt 0 ] 2>/dev/null && command -v xset >/dev/null 2>&1; then
-  ( xset dpms 0 0 "${IDLE_SUSPEND_MINUTES}" 0 ) &
-  log "display suspends after ${IDLE_SUSPEND_MINUTES}m of idle"
+if [ "${IDLE_SUSPEND_MINUTES}" -gt 0 ] 2>/dev/null; then
+  if [ -n "${WAYLAND_DISPLAY:-}" ]; then
+    log "warning: IDLE_SUSPEND_MINUTES is ignored under Wayland; handle idle in the compositor instead"
+  elif command -v xset >/dev/null 2>&1; then
+    ( xset +dpms >/dev/null 2>&1; \
+      xset dpms 0 0 "$(( IDLE_SUSPEND_MINUTES * 60 ))" >/dev/null 2>&1 ) &
+    log "display suspends after ${IDLE_SUSPEND_MINUTES}m of idle"
+  else
+    log "warning: IDLE_SUSPEND_MINUTES is set but xset is not installed; ignoring"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
