@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-09
+
+### Added
+
+- `MIN_FREE_GB` in `firefox/fetch.sh` overrides the free-space floor. The
+  default stays at Mozilla's 30 GB full-build figure, but Bootowser's
+  stripped release build (shallow clone plus objdir) comes to about 12 GB,
+  so a disk that genuinely fits no longer gets refused outright.
+
+### Fixed
+
+- **The control sidecar was missing from the release package.** Patch
+  `0006` builds `bootowser-control` into `dist/bin`, but `mach package`
+  packs only what `browser/installer/package-manifest.in` lists, and the
+  patch never added it there. A tree installed from the 0.2.0 tarball had
+  no sidecar, so `install.sh` warned and the unit's `ConditionPathExists`
+  stayed false: the page's command API could never come up. The manifest
+  now carries it beside `pingsender`, and this asset contains it.
+
 ## [0.2.0] - 2026-10-08
 
 First Firefox-based release, and the first one with a prebuilt browser tree
@@ -210,6 +229,7 @@ Chromium binary has been compiled from source yet.
 - No all-features build has been completed. Compile errors are likely on the
   first real build.
 
-[Unreleased]: https://github.com/Pratech1015/Bootowser/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Pratech1015/Bootowser/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/Pratech1015/Bootowser/releases/tag/v0.2.1
 [0.2.0]: https://github.com/Pratech1015/Bootowser/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Pratech1015/Bootowser/releases/tag/v0.1.0
