@@ -224,6 +224,7 @@ fails to apply CI stops before anything is built.
 | `configure: error` about a syntax | `autoconf2.13` missing |
 | assembly errors | `nasm` missing |
 | disk full partway through | objdir is on a small filesystem; check `df` on `--dest` |
+| `fetch.sh` refuses: "at least 30 GB is required" | the floor is Mozilla's full-build figure; a stripped release build fits in ~12 GB, so set `MIN_FREE_GB=15` if the disk is tight but known to fit |
 | `series references missing patch` | `patches/series` and the files in `patches/` disagree |
 | `firefox-src is at X but the patch series targets Y` | `FIREFOX_VERSION` changed without replaying the series |
 | error naming a pref and saying it is out of order | a pref was added to `StaticPrefList.yaml` out of alphabetical order |

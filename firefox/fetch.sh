@@ -18,6 +18,10 @@
 #   FIREFOX_SRC_DIR=/mnt/fast/firefox-src ./fetch.sh
 #   ./fetch.sh --dest /mnt/fast/firefox-src
 #
+# The free-space floor is 30 GB, Mozilla's documented minimum for a full
+# build. Set MIN_FREE_GB to override it on a disk that is tight but known to
+# fit: a shallow clone plus Bootowser's stripped release objdir is ~12 GB.
+#
 set -euo pipefail
 
 SELF="$(readlink -f "${BASH_SOURCE[0]}")"
@@ -44,7 +48,7 @@ VERSION="${FIREFOX_VERSION}"
 DEST="${DEFAULT_DEST}"
 DEPTH=1
 
-usage() { sed -n '3,20p' "${SELF}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,24p' "${SELF}" | sed 's/^# \{0,1\}//'; }
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -95,9 +99,15 @@ esac
 if [ -n "${avail_kb}" ]; then
   avail_gb=$(( avail_kb / 1024 / 1024 ))
   log "space available for ${DEST}: ${avail_gb} GB (on ${probe})"
-  # Mozilla documents 30 GB as the minimum for a full build.
-  if [ "${avail_gb}" -lt 30 ]; then
-    die "only ${avail_gb} GB free at '${probe}'; Firefox needs at least 30 GB to build. Point --dest (or FIREFOX_SRC_DIR) at a bigger filesystem"
+  # Mozilla documents 30 GB as the minimum for a full build. Bootowser's
+  # stripped release build lands nearer 12 GB (shallow clone plus objdir),
+  # so let an operator who knows the disk fits override the floor.
+  min_free_gb="${MIN_FREE_GB:-30}"
+  case "${min_free_gb}" in
+    ''|*[!0-9]*) die "MIN_FREE_GB must be a whole number of gigabytes" ;;
+  esac
+  if [ "${avail_gb}" -lt "${min_free_gb}" ]; then
+    die "only ${avail_gb} GB free at '${probe}'; at least ${min_free_gb} GB is required (set MIN_FREE_GB to override). Point --dest (or FIREFOX_SRC_DIR) at a bigger filesystem"
   fi
 else
   log "warning: could not determine free space for ${DEST}"
