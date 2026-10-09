@@ -18,7 +18,8 @@ So the executor is its own process, built from this tree like pingsender:
   * toolkit/bootowser-control: a small loopback-only HTTP/1.1 daemon,
     GeckoProgram with linkage=None (no libxul: the command channel
     survives a browser restart) and DisableStlWrapping for the same
-    reason pingsender does it.
+    reason pingsender does it. It rides in the package manifest beside
+    pingsender, so release packages carry it and not just dist/bin.
   * POST /v1/exec runs an arbitrary shell string as the kiosk user via
     sh -c in its own process group with a fresh minimal environment;
     timeout kills the whole group (SIGTERM, then SIGKILL), stdout/stderr
@@ -38,15 +39,16 @@ So the executor is its own process, built from this tree like pingsender:
     status, duration, and the command or script name with control
     characters stripped.
 ---
- toolkit/bootowser-control/control.h |  41 ++
- toolkit/bootowser-control/exec.cpp  | 331 +++++++++++++
- toolkit/bootowser-control/exec.h    |  50 ++
- toolkit/bootowser-control/http.cpp  | 365 ++++++++++++++
- toolkit/bootowser-control/http.h    |  78 +++
- toolkit/bootowser-control/main.cpp  | 743 ++++++++++++++++++++++++++++
- toolkit/bootowser-control/moz.build |  20 +
- toolkit/moz.build                   |   1 +
- 8 files changed, 1629 insertions(+)
+ browser/installer/package-manifest.in |   4 ++++
+ toolkit/bootowser-control/control.h   |  41 ++
+ toolkit/bootowser-control/exec.cpp    | 331 +++++++++++++
+ toolkit/bootowser-control/exec.h      |  50 ++
+ toolkit/bootowser-control/http.cpp    | 365 ++++++++++++++
+ toolkit/bootowser-control/http.h      |  78 +++
+ toolkit/bootowser-control/main.cpp    | 743 ++++++++++++++++++++++++++++
+ toolkit/bootowser-control/moz.build   |  20 +
+ toolkit/moz.build                     |   1 +
+ 9 files changed, 1633 insertions(+)
  create mode 100644 toolkit/bootowser-control/control.h
  create mode 100644 toolkit/bootowser-control/exec.cpp
  create mode 100644 toolkit/bootowser-control/exec.h
@@ -55,6 +57,21 @@ So the executor is its own process, built from this tree like pingsender:
  create mode 100644 toolkit/bootowser-control/main.cpp
  create mode 100644 toolkit/bootowser-control/moz.build
 
+diff --git a/browser/installer/package-manifest.in b/browser/installer/package-manifest.in
+index 46725ca..cd7f4aa 100644
+--- a/browser/installer/package-manifest.in
++++ b/browser/installer/package-manifest.in
+@@ -414,6 +414,10 @@ bin/libfreebl_64int_3.so
+ ;
+ @BINPATH@/pingsender@BIN_SUFFIX@
+ 
++; [ Bootowser control sidecar ]
++;
++@BINPATH@/bootowser-control@BIN_SUFFIX@
++
+ ; [ Native Messaging Host Proxy ]
+ ;
+ #if defined(XP_WIN) || defined(XP_MACOSX)
 diff --git a/toolkit/bootowser-control/control.h b/toolkit/bootowser-control/control.h
 new file mode 100644
 index 0000000000..eb0d7e2d1b
